@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.2]
+
+### Security
+
+- Replaced a real RustDesk id used in examples, tests, and embedded skill
+  documentation with a placeholder (123456789). No credentials were ever
+  present; this removes a device identifier from the docs and binaries.
+
 ## [0.4.1]
 
 ### Fixed
