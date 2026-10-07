@@ -222,9 +222,14 @@ func runRustDeskConnect(cmd *cobra.Command, args []string) error {
 		return output.NewCodedError("USAGE", "id must not be empty")
 	}
 	bin := rustdeskBinary()
-	if bin == "" {
+	if bin == "" && !flagDryRun {
 		return output.NewCodedError("DEVICE_ERROR",
 			"rustdesk binary not found; install RustDesk or set it on PATH")
+	}
+	// A dry run previews the command even when RustDesk is not installed yet.
+	displayBin := bin
+	if displayBin == "" {
+		displayBin = "rustdesk"
 	}
 	// Build the argument vector; the password (if any) is passed to rustdesk
 	// but never echoed by kvm-cli.
@@ -233,8 +238,8 @@ func runRustDeskConnect(cmd *cobra.Command, args []string) error {
 		rdArgs = append(rdArgs, "--password", flagRustDeskPassword)
 	}
 	if flagDryRun {
-		out := map[string]any{"dry_run": true, "binary": bin, "id": id, "message": "would launch rustdesk --connect " + id}
-		td := output.TableData{Headers: []string{"ACTION"}, Rows: [][]string{{"dry run: " + bin + " --connect " + id}}}
+		out := map[string]any{"dry_run": true, "binary": displayBin, "id": id, "message": "would launch rustdesk --connect " + id}
+		td := output.TableData{Headers: []string{"ACTION"}, Rows: [][]string{{"dry run: " + displayBin + " --connect " + id}}}
 		return output.Render(td, out, GetOutputOptions())
 	}
 	if err := vmRequireYes(flagRustDeskYes, "launch a RustDesk connection"); err != nil {
