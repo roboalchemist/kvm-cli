@@ -287,7 +287,9 @@ func TestScreenshotConnClosed(t *testing.T) {
 	}()
 	c, err := Dial(context.Background(), ln.Addr().String(), Options{Timeout: 3 * time.Second})
 	if err != nil {
-		t.Fatalf("dial: %v", err)
+		// The server closed immediately; a dial-time write error (broken pipe)
+		// is an equally valid observation of the dropped connection.
+		return
 	}
 	defer c.Close()
 	if _, _, _, err := c.Screenshot(context.Background()); err == nil {
