@@ -1,0 +1,68 @@
+# GoReleaser configuration — kvm-cli
+#
+# Docs: https://goreleaser.com
+#
+# Release flow (see docs/release.md):
+#   1. git tag vX.Y.Z && git push origin vX.Y.Z
+#   2. .github/workflows/release.yml runs `goreleaser release --clean`
+#   3. GoReleaser builds cross-platform binaries, creates the GitHub release,
+#      uploads archives + checksums, and updates the Homebrew tap formula.
+#
+# Validate locally:
+#   goreleaser check
+#   goreleaser release --snapshot --clean
+version: 2
+
+project_name: kvm-cli
+
+builds:
+  - binary: kvm-cli
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: roboalchemist
+    name: kvm-cli
+  draft: false
+  prerelease: auto
+
+brews:
+  - name: kvm-cli
+    repository:
+      owner: roboalchemist
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/roboalchemist/kvm-cli"
+    description: "Agent-first CLI for GL.iNet / PiKVM remote KVMs, VNC, and RustDesk"
+    license: "MIT"
+    install: |
+      bin.install "kvm-cli"
+    test: |
+      system "#{bin}/kvm-cli", "version"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+      - "^Merge "
