@@ -6,7 +6,7 @@ require (
 	github.com/fatih/color v1.19.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/itchyny/gojq v0.12.19
-	github.com/olekukonko/tablewriter v1.1.4
+	github.com/olekukonko/tablewriter v1.1.5
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/term v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
