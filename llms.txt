@@ -1,0 +1,134 @@
+# kvm-cli
+
+> Agent-first CLI for the GL.iNet Comet PoE Remote KVM (GL-RM1PE) — a PiKVM-based
+> remote KVM exposing a REST API, a WebSocket HID channel, and a JPEG snapshot
+> endpoint. Capture screenshots, inject keyboard/mouse input, mount virtual
+> media, wake machines over LAN, and control ATX power.
+
+## Documentation
+
+- [skill/SKILL.md](skill/SKILL.md): Claude Code / agent skill — overview, auth, computer-use loop, HID notes, safety
+- [skill/reference/commands.md](skill/reference/commands.md): complete command reference — every command, flag, default, and example
+- [README.md](README.md): install, auth setup, usage examples, global flags
+- [docs/config.md](docs/config.md): config.json schema, environment variables, credential priority chain, defaults
+- [docs/ergonomics.md](docs/ergonomics.md): v0.3.0 agent ergonomics — `cua find`/`text`/`wait`, selector-mode click, `screenshot --region`/`--scale`/`--until-stable`, coordinate mapping
+- VNC transport: native RFB client — `kvm-cli vnc ...` and `--vnc` on `screenshot`/`cua` (None / VNC DES / Apple-ARD auth; RAW/CopyRect/Hextile). See [skill/reference/commands.md](skill/reference/commands.md#vnc)
+- RustDesk: `kvm-cli rustdesk info|id|peers|status|connect` (config/peers management + launch; drive via VNC/KVM). See [skill/reference/commands.md](skill/reference/commands.md#rustdesk)
+- CUA / OmniParser: [skill/SKILL.md](skill/SKILL.md#computer-use-assistance-cua--omniparser) and [skill/reference/commands.md](skill/reference/commands.md#cua-computer-use-assistance) — ground a screenshot into numbered elements, select them deterministically (`cua find --text`), or resolve an instruction to a click via the models platform
+
+## Quick Start
+
+- Install: `brew tap roboalchemist/tap && brew install kvm-cli (or go install github.com/roboalchemist/kvm-cli@latest)`
+- Auth (any one of):
+  - `export KVM_URL=... KVM_USERNAME=... KVM_PASSWORD=...`
+  - gopass entries `env/GLKVM_URL`, `env/GLKVM_USERNAME`, `env/GLKVM_PASSWORD`
+  - `kvm-cli config set url|username|password ...`
+- Verify: `kvm-cli auth status`
+- Discover: `kvm-cli --help` and `kvm-cli skill print`
+
+## Agent Computer-Use Loop
+
+```bash
+kvm-cli screenshot -o /tmp/screen.jpg     # SEE
+# THINK: analyze /tmp/screen.jpg (framebuffer 2560x1440)
+kvm-cli hid mouse move 1280 720           # ACT
+kvm-cli hid mouse click left
+kvm-cli hid type "hello world" --enter
+kvm-cli hid combo ctrl+alt+del
+kvm-cli screenshot -o /tmp/screen.jpg     # SEE again
+```
+
+## CUA / OmniParser (computer-use assistance)
+
+`kvm-cli cua` grounds a screenshot into numbered UI elements and resolves a
+natural-language instruction to a click, via the models platform
+(default `https://models.example.com`).
+
+```bash
+kvm-cli screenshot                        # SEE — writes a temp file in the scratch dir
+kvm-cli cua ground                        # elements (auto-captures if no --image)
+kvm-cli cua click "click the Settings icon"          # plan + resolve (no click)
+kvm-cli cua click "click Login" --execute --yes      # actually click over HID
+kvm-cli cua models                        # list grounding/chat models
+kvm-cli cua probe                         # grounding readiness (alias: cua status)
+kvm-cli cua parse screenshot.jpg          # Microsoft /parse/ compatibility
+```
+
+Only the grounded element list reaches the planner — image bytes are never put
+in the model prompt. Screenshots default to the scratch dir (never the CWD);
+`--annotate` writes the Set-of-Mark PNG on demand.
+
+Config (flag > env > config > default): `--models-url`/`KVM_MODELS_URL`/`models_url`
+(default `https://models.example.com`), `--model`/`KVM_GROUNDING_MODEL`/`grounding_model`
+(default `omniparser`), `--planner`/`KVM_PLANNER_MODEL`/`planner_model` (default auto),
+`--scratch-dir`/`KVM_SCRATCH_DIR`/`scratch_dir` (default OS temp dir).
+
+## Commands
+
+- auth: `login`, `check`, `status`, `logout`
+- info: device information document
+- system: read info; `set-hostname`, `set-network`, `set-config`, `set-param`, `set-time`, `set-timezone`, `set-firewall`, `ssl-cert` (require `--yes`)
+- screenshot: capture a JPEG (default output: scratch dir; `-o`, `--frames`, `--keep-alive`)
+- streamer: `status`, `snapshot` (alias for screenshot), `set-params`
+- hid: `status`, `keys`, `key`, `combo`, `type`, `print`, `mouse move|click|down|up|wheel`, `set-mouse-output`
+- atx: `status`, `power` (`--long`), `reset`, `click <power|power_long|reset>` (group flag `--force`)
+- cua: `models`, `probe` (alias `status`), `ground [image]`, `click INSTRUCTION`, `parse [image]` — OmniParser grounding + planner click
+- msd: `status`, `partitions`, `connect`, `disconnect`, `set-connected`, `set-params`, `write`, `write-remote`, `format`, `remove`
+- wol: `list`, `scan`, `add`, `wake`, `remove`
+- switch: `status`, `set-active` (unsupported on this firmware)
+- screen: `status`, `background`, `set-background`, `delete-background`, `set-mode`, `set-time-format`, `set-date-format`
+- tailscale / netbird / zerotier: overlay-network clients (`start`, `stop --yes`, `status`, ...)
+- repeater: `scan`, `status`, `saved`, `connect`, `enable`, `disconnect --yes`, `remove-saved --yes`
+- ap: `status`, `enable`, `close-all`, `open-last`
+- modem: `at`, `sim-setting`, `input-pin`
+- upgrade: `version`, `check`, `download`, `cancel`, `edid`, `log`, `start --yes`, `upload --yes`, `reboot --yes`, `reset --yes`
+- twofa (alias `2fa`): `is-enabled`, `show`, `create --yes`, `init --yes`, `delete --yes`
+- asr: `status`, `start`, `stop`
+- fingerbot: `battery`, `click`, `upgrade --yes`
+- init: `status`, `run --yes`, `change-password --yes`
+- turn: `get`
+- config: `get`, `set`, `list`, `unset`
+- skill: `print`, `path`, `add` · docs · man · completion · version
+
+Destructive operations require `--yes`; without it they print a dry run.
+
+## Output Formats
+
+- `--json` (`-j`): machine-readable JSON (all data-returning commands)
+- `--plaintext` (`-p`): tab-separated values for piping
+- `--format table|json|plaintext|yaml`
+- `--fields a,b`: project JSON keys (reduce tokens)
+- `--jq '<expr>'`: filter JSON
+- stdout = data; stderr = warnings/progress/errors
+- Exit codes: `0` success, `1` user/runtime error, `2` usage error
+
+## Authentication
+
+Priority chain per field: flags > `KVM_*` env > `GLKVM_*` env > gopass
+(`env/GLKVM_*`) > config file > prompt (TTY only).
+
+## Environment
+
+| Variable | Alias | Description |
+|----------|-------|-------------|
+| `KVM_URL` | `GLKVM_URL` | KVM device base URL |
+| `KVM_USERNAME` | `GLKVM_USERNAME` | Username |
+| `KVM_PASSWORD` | `GLKVM_PASSWORD` | Password |
+| `KVM_TIMEOUT` | `GLKVM_TIMEOUT` | HTTP timeout (Go duration, default `30s`) |
+| `KVM_INSECURE` | `GLKVM_INSECURE` | Skip TLS verification (`true`/`false`) |
+| `KVM_TLS_STRICT` | `GLKVM_TLS_STRICT` | Disable the insecure TLS fallback (`1`) |
+| `KVM_CONFIG` | `GLKVM_CONFIG` | Config file path |
+| `KVM_MODELS_URL` | — | Models platform root for `cua` (default `https://models.example.com`) |
+| `KVM_GROUNDING_MODEL` | — | CUA grounding model id (default `omniparser`) |
+| `KVM_PLANNER_MODEL` | — | CUA planner chat model id (default auto) |
+| `KVM_SCRATCH_DIR` | — | Scratch dir for transient screenshots/artifacts (default OS temp dir) |
+| `NO_COLOR` | | Disable coloured output |
+
+## Notes
+
+- ATX is disabled on `glkvm` (`"enabled": false`); `atx power`/`reset` refuse unless `--force`.
+- Key names are DOM `KeyboardEvent.code` values (`KeyA`, `Enter`, `ControlLeft`); run `kvm-cli hid keys`.
+- Screenshots (`screenshot`, `streamer snapshot`) default to a timestamped file in the scratch dir, never the CWD; override with `--scratch-dir`/`KVM_SCRATCH_DIR`/`scratch_dir`.
+- `kvm-cli cua` resolution: only the grounded element list reaches the planner — image bytes are never put in the model context.
+- The device uses a self-signed/invalid TLS certificate; `kvm-cli` auto-falls back to insecure TLS with a warning.
+- `config` file: `~/.config/kvm-cli/config.json` (mode `0600`). See [docs/config.md](docs/config.md).

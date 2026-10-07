@@ -1,0 +1,15 @@
+# Gitleaks configuration for kvm-cli.
+#
+# Uses the default ruleset, extended with an allowlist for known-safe strings
+# that trip the generic-api-key rule: a public environment-variable name and a
+# placeholder token used in tests.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known-safe environment-variable names and test fixtures"
+regexes = [
+  '''KVM_2FA_SECRET''',
+  '''0123456789abcdef''',
+]

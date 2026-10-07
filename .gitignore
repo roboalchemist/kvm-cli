@@ -1,0 +1,19 @@
+/kvm-cli
+*.test
+coverage.out
+dist/
+.DS_Store
+
+# Generated docs (make man / make docs-gen)
+docs/man/
+docs/cli/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+
+# Env
+.env
+.env.*
+!.env.example
