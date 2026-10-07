@@ -6,7 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.4.0]
+## [0.4.1]
+
+### Fixed
+
+- `rustdesk connect --dry-run` no longer requires the RustDesk binary to be
+  installed; the preview uses the bare command name when the app is absent.
+- Test hermeticity on machines without RustDesk and on Linux (connection-reset
+  timing in the VNC tests).
+
 
 ### Added
 
