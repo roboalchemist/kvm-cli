@@ -19,6 +19,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `config set planner_model auto`) to restore the previous behavior of picking
   a running chat model from the catalog, or name a specific model.
 - The models platform now only requires a grounding model (OmniParser).
+- Instruction-mode `cua click` fails fast with `PLANNER_REQUIRED` before any
+  network call when no planner is configured.
 
 ## [0.4.2]
 

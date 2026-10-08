@@ -1104,11 +1104,19 @@ func cuaClickPlanner(cmd *cobra.Command, ctx context.Context, client *models.Cli
 		defer cleanup()
 	}
 
+	// Fail fast before any network call: with no planner configured, the
+	// instruction cannot be resolved, so point the caller at the planner-free
+	// loop (cua find + selector click) immediately.
+	if err := cuaRequirePlanner(resolvePlannerModel()); err != nil {
+		return err
+	}
+
 	_, planner, err := cuaResolveModels(ctx, client)
 	if err != nil {
 		return err
 	}
 	if err := cuaRequirePlanner(planner); err != nil {
+		// Covers planner_model=auto resolving to nothing on the catalog.
 		return err
 	}
 
