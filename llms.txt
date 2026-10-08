@@ -60,7 +60,7 @@ in the model prompt. Screenshots default to the scratch dir (never the CWD);
 
 Config (flag > env > config > default): `--models-url`/`KVM_MODELS_URL`/`models_url`
 (default `https://models.example.com`), `--model`/`KVM_GROUNDING_MODEL`/`grounding_model`
-(default `omniparser`), `--planner`/`KVM_PLANNER_MODEL`/`planner_model` (default auto),
+(default `omniparser`), `--planner`/`KVM_PLANNER_MODEL`/`planner_model` (optional; 'auto' picks a running chat model, empty = plan yourself via `cua find` + selector click),
 `--scratch-dir`/`KVM_SCRATCH_DIR`/`scratch_dir` (default OS temp dir).
 
 ## Commands
@@ -120,7 +120,7 @@ Priority chain per field: flags > `KVM_*` env > `GLKVM_*` env > gopass
 | `KVM_CONFIG` | `GLKVM_CONFIG` | Config file path |
 | `KVM_MODELS_URL` | — | Models platform root for `cua` (default `https://models.example.com`) |
 | `KVM_GROUNDING_MODEL` | — | CUA grounding model id (default `omniparser`) |
-| `KVM_PLANNER_MODEL` | — | CUA planner chat model id (default auto) |
+| `KVM_PLANNER_MODEL` | — | CUA planner chat model id (optional; 'auto' = pick a running chat model) |
 | `KVM_SCRATCH_DIR` | — | Scratch dir for transient screenshots/artifacts (default OS temp dir) |
 | `NO_COLOR` | | Disable coloured output |
 

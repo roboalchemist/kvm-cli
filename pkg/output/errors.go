@@ -133,6 +133,10 @@ func errorGuidance(code string) (bool, string) {
 		return true, "Retry the command; if it persists, check connectivity to the device."
 	case "DEVICE_ERROR":
 		return true, "The device rejected the request; check the device state and retry."
+	case "PLANNER_REQUIRED":
+		return true, "Pick the element yourself: run 'kvm-cli cua find --all' (or --text <t>), then " +
+			"'kvm-cli cua click --index N' (or --id/--text). Or opt in with --planner auto " +
+			"(config planner_model auto) to use a models-platform chat model."
 	case "USAGE":
 		return true, "Correct the invocation (see the command's --help) and retry."
 	case "FORBIDDEN":

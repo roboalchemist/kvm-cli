@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.3]
+
+### Changed
+
+- The CUA **planner is now optional (opt-in)**. By default `cua` runs
+  planner-free: the calling agent reads the grounded element list
+  (`cua find`/`cua text`) and clicks via a selector
+  (`cua click --index/--id/--text`). Instruction-mode `cua click` without a
+  planner returns a recoverable `PLANNER_REQUIRED` error with that guidance.
+- Opt in with `--planner auto` (or `KVM_PLANNER_MODEL=auto` /
+  `config set planner_model auto`) to restore the previous behavior of picking
+  a running chat model from the catalog, or name a specific model.
+- The models platform now only requires a grounding model (OmniParser).
+
 ## [0.4.2]
 
 ### Security

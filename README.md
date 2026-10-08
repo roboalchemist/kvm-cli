@@ -144,8 +144,10 @@ kvm-cli screenshot -o /tmp/screen.jpg
 `kvm-cli cua` closes the see → think → act loop inside the CLI by pairing the
 screenshot with a hosted **models platform** (`https://models.example.com` by
 default). A **grounding** model (OmniParser) parses the frame into a numbered
-Set-of-Mark element list; a **planner** chat model picks the element matching a
-natural-language instruction; that element's center becomes a click.
+Set-of-Mark element list. An optional **planner** chat model can pick the
+element matching a natural-language instruction, but the default flow is
+planner-free: the calling agent reads the element list and clicks via a selector
+(`cua click --index/--text/--id`) — no chat model required.
 
 ```bash
 # SEE — capture to a temp file (scratch dir, never the CWD)
@@ -216,7 +218,7 @@ CUA settings resolve **flag > environment > config > default**:
 |---------|------|-------------|-----------|---------|
 | Platform root | `--models-url` | `KVM_MODELS_URL` | `models_url` | `https://models.example.com` |
 | Grounding model | `--model` | `KVM_GROUNDING_MODEL` | `grounding_model` | auto (running grounding model) |
-| Planner model | `--planner` | `KVM_PLANNER_MODEL` | `planner_model` | auto (running chat model) |
+| Planner model | `--planner` | `KVM_PLANNER_MODEL` | `planner_model` | *(none — optional)*; `auto` picks a running chat model |
 | Scratch dir | `--scratch-dir` | `KVM_SCRATCH_DIR` | `scratch_dir` | OS temp dir |
 
 ```bash

@@ -548,12 +548,15 @@ Configuration (resolved **flag > environment > config > default**, see
 |---------|------|-------------|-----------|---------|
 | Platform root | `--models-url` | `KVM_MODELS_URL` | `models_url` | `https://models.example.com` |
 | Grounding model | `--model` | `KVM_GROUNDING_MODEL` | `grounding_model` | auto |
-| Planner model | `--planner` | `KVM_PLANNER_MODEL` | `planner_model` | auto |
+| Planner model | `--planner` | `KVM_PLANNER_MODEL` | `planner_model` | *(none — optional)*; `auto` picks a running chat model |
 | Scratch dir | `--scratch-dir` | `KVM_SCRATCH_DIR` | `scratch_dir` | OS temp dir |
 
 `--models-url` is persistent on the whole `cua` group. `--image`, `--annotate`,
 `--model`, `--box-threshold` and `--iou-threshold` are shared by the grounding
-subcommands; `--planner` is used by `cua click` (instruction mode) only.
+subcommands; `--planner` is used by `cua click` (instruction mode) only. The
+planner is **optional**: with none configured, instruction-mode click fails with
+`PLANNER_REQUIRED` and guidance to pick the element yourself via `cua find` +
+selector-mode `cua click --index/--id/--text` — the usual agent loop.
 
 The deterministic selector flags below are shared by `cua find`, `cua click` and
 `cua wait`:

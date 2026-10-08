@@ -66,8 +66,9 @@ func TestCuaModelsMasksURLCredentials(t *testing.T) {
 }
 
 // TestCuaProbeMasksURLAndShowsEffectivePlanner is the F1+F4
-// acceptance: cua probe --json masks the URL userinfo and reports the
-// auto-resolved (non-"-") effective planner.
+// acceptance: cua probe --json masks the URL userinfo. The planner is optional,
+// so with nothing configured probe reports no planner; with --planner auto it
+// reports the auto-resolved (non-"-") effective planner.
 func TestCuaProbeMasksURLAndShowsEffectivePlanner(t *testing.T) {
 	srv := cuaModelsServer(t)
 	defer srv.Close()
@@ -92,8 +93,33 @@ func TestCuaProbeMasksURLAndShowsEffectivePlanner(t *testing.T) {
 	if got.GroundingModel != "omniparser" {
 		t.Errorf("grounding_model = %q, want omniparser", got.GroundingModel)
 	}
+	if got.PlannerModel != "" {
+		t.Errorf("planner_model = %q, want empty (the planner is optional and nothing is configured)", got.PlannerModel)
+	}
+}
+
+// TestCuaProbePlannerAuto covers the opt-in: --planner auto resolves to the
+// catalog's running chat model.
+func TestCuaProbePlannerAuto(t *testing.T) {
+	srv := cuaModelsServer(t)
+	defer srv.Close()
+	cuaSetup(t, makeUserinfoURL(srv.URL))
+	save := flagCuaPlanner
+	flagCuaPlanner = "auto"
+	t.Cleanup(func() { flagCuaPlanner = save })
+
+	flagJSON = true
+	out := captureStdout(t, func() {
+		if err := runCuaProbe(cuaProbeCmd, nil); err != nil {
+			t.Fatalf("runCuaProbe: %v", err)
+		}
+	})
+	var got cuaProbeOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("cua probe --json is not valid JSON: %v\n%s", err, out)
+	}
 	if got.PlannerModel != "qwen-test" {
-		t.Errorf("planner_model = %q, want the auto-picked qwen-test (not \"-\")", got.PlannerModel)
+		t.Errorf("planner_model = %q, want the auto-picked qwen-test", got.PlannerModel)
 	}
 }
 
@@ -104,6 +130,12 @@ func TestCuaClickDryRunResolvesNoHID(t *testing.T) {
 	srv := cuaModelsServer(t)
 	defer srv.Close()
 	cuaSetup(t, srv.URL)
+	// The planner is opt-in: request the catalog auto-pick explicitly.
+	{
+		save := flagCuaPlanner
+		flagCuaPlanner = "auto"
+		t.Cleanup(func() { flagCuaPlanner = save })
+	}
 	flagCuaImage = writeTestImage(t)
 	flagJSON = true
 	flagDryRun = true
@@ -152,6 +184,12 @@ func TestCuaClickDryRunWithoutExecute(t *testing.T) {
 	srv := cuaModelsServer(t)
 	defer srv.Close()
 	cuaSetup(t, srv.URL)
+	// The planner is opt-in: request the catalog auto-pick explicitly.
+	{
+		save := flagCuaPlanner
+		flagCuaPlanner = "auto"
+		t.Cleanup(func() { flagCuaPlanner = save })
+	}
 	flagCuaImage = writeTestImage(t)
 	flagJSON = true
 	flagDryRun = true
@@ -323,5 +361,35 @@ func TestCuaFlagSurface(t *testing.T) {
 			t.Errorf("%s keep-image help text duplicates the default: %q",
 				c.CommandPath(), c.Flags().Lookup("keep-image").Usage)
 		}
+	}
+}
+
+// TestCuaClickInstructionWithoutPlannerRelaysBack locks in the optional
+// planner: with no planner configured, instruction-mode click fails with
+// PLANNER_REQUIRED and guidance pointing at the find + selector-click loop the
+// parent LLM is expected to run instead.
+func TestCuaClickInstructionWithoutPlannerRelaysBack(t *testing.T) {
+	srv := cuaModelsServer(t)
+	defer srv.Close()
+	cuaSetup(t, srv.URL)
+	savePlanner := flagCuaPlanner
+	flagCuaPlanner = "" // nothing configured: planner stays off
+	t.Cleanup(func() { flagCuaPlanner = savePlanner })
+	flagCuaImage = writeTestImage(t)
+
+	err := runCuaClick(cuaClickCmd, []string{"click Settings"})
+	if err == nil {
+		t.Fatal("expected PLANNER_REQUIRED with no planner configured")
+	}
+	if code := output.ErrorCode(err); code != "PLANNER_REQUIRED" {
+		t.Fatalf("error code = %q, want PLANNER_REQUIRED (%v)", code, err)
+	}
+	// The structured guidance must relay the plan back to the caller.
+	detail := output.NewStructuredError(err).Error
+	if detail.Code != "PLANNER_REQUIRED" || !detail.Recoverable {
+		t.Errorf("structured error = %+v, want recoverable PLANNER_REQUIRED", detail)
+	}
+	if !strings.Contains(detail.Suggestion, "cua click --index") {
+		t.Errorf("suggestion = %q, want the selector-click flow", detail.Suggestion)
 	}
 }

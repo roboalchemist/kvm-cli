@@ -108,7 +108,7 @@ are recognised; unknown keys are ignored.
 | `output_format` | string | `"table"` | `config set output_format` | Default render mode |
 | `models_url` | string | `"https://models.example.com"` | `config set models_url` | CUA models-platform root |
 | `grounding_model` | string | `"omniparser"` | `config set grounding_model` | OmniParser grounding (screen-parser) model id |
-| `planner_model` | string | *(auto)* | `config set planner_model` | CUA planner (element-chooser) chat model id; empty picks a running chat model |
+| `planner_model` | string | *(empty)* | `config set planner_model` | CUA planner (element-chooser) chat model id; **optional** — empty disables the planner (the caller picks elements via `cua find` + selector clicks); the value `auto` picks a running chat model |
 | `scratch_dir` | string | OS temp dir | `config set scratch_dir` | Directory for transient screenshots / Set-of-Mark PNGs |
 
 `config list` omits unset keys and `insecure=false`. `config unset <key>`
@@ -163,7 +163,7 @@ removes a key and restores its built-in default.
 | Colour | auto (TTY-aware) | `--no-color`, `NO_COLOR` |
 | CUA models platform | `https://models.example.com` | `--models-url`, `KVM_MODELS_URL`, `models_url` |
 | CUA grounding model | `omniparser` | `--model`, `KVM_GROUNDING_MODEL`, `grounding_model` |
-| CUA planner model | auto (a running chat model) | `--planner`, `KVM_PLANNER_MODEL`, `planner_model` |
+| CUA planner model | *(none — optional)* | `--planner`, `KVM_PLANNER_MODEL`, `planner_model` |
 | Scratch directory | OS temp dir | `--scratch-dir`, `KVM_SCRATCH_DIR`, `scratch_dir` |
 
 ## Managing configuration

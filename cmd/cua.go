@@ -100,8 +100,10 @@ func resolveGroundingModel() string {
 }
 
 // resolvePlannerModel applies the precedence
-// --planner flag > KVM_PLANNER_MODEL > config planner_model > "" (auto: pick a
-// running chat model from the catalog).
+// --planner flag > KVM_PLANNER_MODEL > config planner_model > "" (none). The
+// planner is optional: when unset, `cua click` instruction mode asks the caller
+// to pick the element itself via `cua find` + selector-mode click. The special
+// value "auto" opts in to picking a running chat model from the catalog.
 func resolvePlannerModel() string {
 	return cuaFirstNonEmpty(
 		flagCuaPlanner,
@@ -163,12 +165,15 @@ func cuaResolveGrounding(ctx context.Context, client *models.Client) string {
 
 // cuaResolveModels resolves the effective grounding and planner models in one
 // shot. The catalog is fetched at most once, and only when a model is not
-// already configured. grounding is always non-empty; planner may be empty when
-// the catalog has no chat model (the caller decides whether that is fatal).
+// already configured. grounding is always non-empty (auto-picked); the planner
+// is optional and only resolved when explicitly configured — the value "auto"
+// opts in to picking a running chat model from the catalog. An empty planner is
+// not an error; the caller decides whether it needs one.
 func cuaResolveModels(ctx context.Context, client *models.Client) (grounding, planner string, err error) {
 	grounding = resolveGroundingModel()
 	planner = resolvePlannerModel()
-	if grounding != "" && planner != "" {
+	plannerAuto := strings.EqualFold(strings.TrimSpace(planner), "auto")
+	if grounding != "" && planner != "" && !plannerAuto {
 		client.GroundingModel = grounding
 		return grounding, planner, nil
 	}
@@ -182,7 +187,7 @@ func cuaResolveModels(ctx context.Context, client *models.Client) (grounding, pl
 			grounding = models.DefaultGroundingModel
 		}
 	}
-	if planner == "" {
+	if plannerAuto {
 		planner = cat.DefaultPlanner()
 	}
 	client.GroundingModel = grounding
@@ -190,13 +195,14 @@ func cuaResolveModels(ctx context.Context, client *models.Client) (grounding, pl
 }
 
 // cuaRequirePlanner returns a coded error when no planner (chat) model is
-// available to choose the element.
+// configured, pointing the caller at the planner-free agent flow: the caller
+// picks the element itself from `cua find` output and clicks it with a selector.
 func cuaRequirePlanner(planner string) error {
 	if planner != "" {
 		return nil
 	}
-	return output.NewCodedError("DEVICE_ERROR",
-		"no planner (chat) model is available on the models platform; set --planner or config planner_model")
+	return output.NewCodedError("PLANNER_REQUIRED",
+		"no planner model is configured (the planner is optional)")
 }
 
 // ---- annotated-image + screenshot helpers -----------------------------------
@@ -532,7 +538,7 @@ stay small and images stay out of the model context.
 Configuration (flag > environment > config > auto-pick > default):
   --models-url / KVM_MODELS_URL / models_url        default https://models.example.com
   --model      / KVM_GROUNDING_MODEL / grounding_model   default auto (a running grounding model)
-  --planner    / KVM_PLANNER_MODEL / planner_model       default auto (a running chat model)
+  --planner    / KVM_PLANNER_MODEL / planner_model       optional; 'auto' = pick a running chat model
   --scratch-dir / KVM_SCRATCH_DIR / scratch_dir          default OS temp dir
 
 Run 'kvm-cli cua models' to see which grounding and chat models are available.`,
@@ -1469,7 +1475,7 @@ func init() {
 	// probe/models/status. It is not accepted by ground/parse, which never plan.
 	for _, c := range []*cobra.Command{cuaModelsCmd, cuaProbeCmd, cuaStatusCmd, cuaClickCmd} {
 		c.Flags().StringVar(&flagCuaPlanner, "planner", "",
-			"Planner chat model id (env: KVM_PLANNER_MODEL; default: auto)")
+			"Planner chat model id (env: KVM_PLANNER_MODEL; optional - omit to plan yourself, or 'auto')")
 	}
 
 	// Thresholds apply to every grounding path.

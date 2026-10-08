@@ -252,6 +252,12 @@ func TestCuaClickPlannerStillWorks(t *testing.T) {
 	defer srv.Close()
 	cuaFindSetup(t, srv.URL)
 	flagJSON = true
+	// The planner is opt-in: request the catalog auto-pick explicitly.
+	{
+		save := flagCuaPlanner
+		flagCuaPlanner = "auto"
+		t.Cleanup(func() { flagCuaPlanner = save })
+	}
 	// No selector: planner path. The mock planner returns "0".
 	out := captureStdout(t, func() {
 		if err := runCuaClick(cuaClickCmd, []string{"click the Settings icon"}); err != nil {

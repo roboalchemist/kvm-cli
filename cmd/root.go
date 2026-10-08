@@ -261,7 +261,7 @@ Environment Variables:
   - KVM_SCRATCH_DIR: Directory for transient screenshots/artifacts (default: OS temp dir)
   - KVM_MODELS_URL: Computer-use models platform URL (default https://models.example.com)
   - KVM_GROUNDING_MODEL: Screen-parser (OmniParser) model id (default omniparser)
-  - KVM_PLANNER_MODEL: Element-chooser chat model id (default: auto)
+  - KVM_PLANNER_MODEL: Element-chooser chat model id (optional; 'auto' picks a running chat model)
   - NO_COLOR: Disable colored output when set to any value
 
 Files:

@@ -252,6 +252,12 @@ func TestCuaClickResolvesElement(t *testing.T) {
 	srv := cuaModelsServer(t)
 	defer srv.Close()
 	cuaSetup(t, srv.URL)
+	// The planner is opt-in: request the catalog auto-pick explicitly.
+	{
+		save := flagCuaPlanner
+		flagCuaPlanner = "auto"
+		t.Cleanup(func() { flagCuaPlanner = save })
+	}
 	flagCuaImage = writeTestImage(t)
 	flagJSON = true
 

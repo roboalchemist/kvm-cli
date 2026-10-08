@@ -54,7 +54,7 @@ Supported keys:
   - output_format: Default output format (table|json|plaintext|yaml)
   - models_url: Computer-use models platform URL (default https://models.example.com)
   - grounding_model: Screen-parser (OmniParser) model id (default omniparser)
-  - planner_model: Element-chooser chat model id (default: auto)
+  - planner_model: Element-chooser chat model id (optional; omit to plan yourself, or 'auto' to pick a running chat model)
   - scratch_dir: Directory for transient screenshots / Set-of-Mark PNGs (default: OS temp dir)
 
 The output_format key is also accepted under the alias 'format'. Use 'config
