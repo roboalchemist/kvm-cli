@@ -20,7 +20,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Planner on any OpenAI-compatible endpoint**: `--planner-url` /
   `KVM_PLANNER_URL` / `config set planner_url` (+ `--planner-api-key` /
   `planner_api_key`, sent as a Bearer token). A bare base URL gets
-  `/chat/completions` appended.
+  `/chat/completions` appended. With `--grounding-backend local`, the platform
+  is never contacted: instruction-mode clicks pair local grounding with the
+  external planner endpoint directly (`--planner <id> --planner-url <url>`).
 
 ### Changed
 

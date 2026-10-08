@@ -1349,13 +1349,25 @@ func cuaClickPlanner(cmd *cobra.Command, ctx context.Context, client *models.Cli
 		return err
 	}
 
-	_, planner, err := cuaResolveModels(ctx, client)
-	if err != nil {
-		return err
-	}
-	if err := cuaRequirePlanner(planner); err != nil {
-		// Covers planner_model=auto resolving to nothing on the catalog.
-		return err
+	var planner string
+	if strings.EqualFold(resolveGroundingBackend(), grounding.BackendLocal) {
+		// Local grounding: the platform is not involved at all. The planner
+		// comes strictly from explicit configuration.
+		planner = resolvePlannerModel()
+		if strings.EqualFold(strings.TrimSpace(planner), "auto") && resolvePlannerURL() == "" {
+			return output.NewCodedError("USAGE",
+				"planner auto needs the models platform; with --grounding-backend local pass --planner <model-id> (and --planner-url for any OpenAI-compatible endpoint)")
+		}
+	} else {
+		_, plannerResolved, perr := cuaResolveModels(ctx, client)
+		if perr != nil {
+			return perr
+		}
+		planner = plannerResolved
+		if err := cuaRequirePlanner(planner); err != nil {
+			// Covers planner_model=auto resolving to nothing on the catalog.
+			return err
+		}
 	}
 	if resolvePlannerURL() != "" && planner == "" {
 		return output.NewCodedError("USAGE",
