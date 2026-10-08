@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -191,14 +192,22 @@ func TestCaptionerBaseURL(t *testing.T) {
 }
 
 func TestCaptionerScriptPathWriteError(t *testing.T) {
-	// Make the cache path a regular file so MkdirAll fails.
+	// Make the cache path a regular file so MkdirAll fails. The cache root is
+	// platform-specific: ~/Library/Caches on darwin, ~/.cache elsewhere.
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("KVM_CAPTIONER_SCRIPT", "")
-	if err := os.MkdirAll(filepath.Join(dir, "Library", "Caches"), 0o755); err != nil {
+	var cacheRoot string
+	switch runtime.GOOS {
+	case "darwin":
+		cacheRoot = filepath.Join(dir, "Library", "Caches")
+	default:
+		cacheRoot = filepath.Join(dir, ".cache")
+	}
+	if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "Library", "Caches", "kvm-cli"), []byte("x"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(cacheRoot, "kvm-cli"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	SetCaptionerScript("#!/usr/bin/env python3\n")
