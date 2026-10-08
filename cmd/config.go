@@ -283,7 +283,7 @@ func runConfigUnset(cmd *cobra.Command, args []string) error {
 // masked too, so neither 'config get url' nor 'config list' can leak userinfo.
 // Ordinary URLs without userinfo are returned unchanged.
 func maskConfigValue(key, value string) string {
-	if key == "password" && value != "" {
+	if (key == "password" || key == "planner_api_key") && value != "" {
 		return redact.Mask
 	}
 	return redact.Params(value)

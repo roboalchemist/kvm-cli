@@ -50,6 +50,13 @@ type Options struct {
 	// PlannerModel is the default chat model for Plan. Empty requires the
 	// caller to pass PlanOptions.Model.
 	PlannerModel string
+	// PlannerURL, when set, points Plan at any OpenAI-compatible chat
+	// completions endpoint instead of the models platform (a bare base URL gets
+	// /chat/completions appended; a URL already ending in /chat/completions is
+	// used verbatim).
+	PlannerURL string
+	// PlannerAPIKey is sent as a Bearer token to PlannerURL when set.
+	PlannerAPIKey string
 	// Timeout bounds each request. Non-positive uses defaultTimeout.
 	Timeout time.Duration
 	// Insecure disables TLS certificate verification.
@@ -65,6 +72,8 @@ type Client struct {
 	BaseURL        string
 	GroundingModel string
 	PlannerModel   string
+	PlannerURL     string
+	PlannerAPIKey  string
 	Timeout        time.Duration
 	Insecure       bool
 	HTTPClient     *http.Client
@@ -103,6 +112,8 @@ func NewClient(opts Options) *Client {
 		BaseURL:        strings.TrimRight(base, "/"),
 		GroundingModel: gm,
 		PlannerModel:   strings.TrimSpace(opts.PlannerModel),
+		PlannerURL:     strings.TrimSpace(opts.PlannerURL),
+		PlannerAPIKey:  strings.TrimSpace(opts.PlannerAPIKey),
 		Timeout:        timeout,
 		Insecure:       opts.Insecure,
 		HTTPClient:     hc,
@@ -149,8 +160,12 @@ func (c *Client) Probe(ctx context.Context) (string, error) {
 // do issues one request and, on success, decodes the JSON body into out (nil
 // discards it). A non-2xx response becomes a *Error.
 func (c *Client) do(ctx context.Context, method, path, contentType string, body []byte, out any) error {
-	target := c.resolve(path)
+	return c.doRaw(ctx, method, c.resolve(path), nil, contentType, body, out)
+}
 
+// doRaw performs an HTTP request against an absolute URL with optional extra
+// headers, applying the shared timeout/error/decode handling.
+func (c *Client) doRaw(ctx context.Context, method, target string, headers map[string]string, contentType string, body []byte, out any) error {
 	if c.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
@@ -169,6 +184,9 @@ func (c *Client) do(ctx context.Context, method, path, contentType string, body 
 	req.Header.Set("Accept", "application/json")
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	resp, err := c.httpClient().Do(req)

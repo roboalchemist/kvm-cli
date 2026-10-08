@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -335,5 +336,92 @@ func TestPlanPromptAndWireNoHTMLEscaping(t *testing.T) {
 		if strings.Contains(string(rawBody), bad) {
 			t.Errorf("wire body contains HTML escape %q:\n%s", bad, rawBody)
 		}
+	}
+}
+
+// TestPlanOpenAICompatibleEndpoint verifies that a configured PlannerURL routes
+// the plan request to <url>/chat/completions (bare base) or verbatim (already a
+// chat-completions URL), with an optional Bearer token, using the standard
+// OpenAI request shape.
+func TestPlanOpenAICompatibleEndpoint(t *testing.T) {
+	elements := []Element{
+		{Type: "icon", Content: "Username", Center: [2]float64{10, 20}},
+		{Type: "text", Content: "Sign in", Center: [2]float64{50, 60}},
+	}
+
+	cases := []struct {
+		name       string
+		plannerURL string
+		wantPath   string
+	}{
+		{"bare base URL", "%s/v1", "/v1/chat/completions"},
+		{"full chat path", "%s/v1/chat/completions", "/v1/chat/completions"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPath, gotAuth string
+			var req struct {
+				Model    string `json:"model"`
+				Messages []struct{ Role, Content string }
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				gotAuth = r.Header.Get("Authorization")
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Errorf("decode: %v", err)
+				}
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"id 1"}}]}`))
+			}))
+			defer srv.Close()
+
+			c := NewClient(Options{
+				BaseURL:       "http://models.example", // must NOT be contacted
+				HTTPClient:    srv.Client(),
+				PlannerModel:  "llama-3-8b",
+				PlannerURL:    fmt.Sprintf(tc.plannerURL, srv.URL),
+				PlannerAPIKey: "sk-test-key",
+			})
+			res, err := c.Plan(context.Background(), "click Sign in", elements, PlanOptions{})
+			if err != nil {
+				t.Fatalf("Plan: %v", err)
+			}
+			if gotPath != tc.wantPath {
+				t.Errorf("path = %q, want %q", gotPath, tc.wantPath)
+			}
+			if gotAuth != "Bearer sk-test-key" {
+				t.Errorf("authorization = %q, want Bearer token", gotAuth)
+			}
+			if req.Model != "llama-3-8b" {
+				t.Errorf("model = %q", req.Model)
+			}
+			if len(req.Messages) != 2 || req.Messages[1].Role != "user" {
+				t.Errorf("messages = %+v, want system+user", req.Messages)
+			}
+			if res.ElementID != 1 {
+				t.Errorf("element id = %d, want 1", res.ElementID)
+			}
+		})
+	}
+}
+
+// TestPlanOpenAIEndpointWithoutKey verifies no Authorization header is sent when
+// no API key is configured.
+func TestPlanOpenAIEndpointWithoutKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if auth := r.Header.Get("Authorization"); auth != "" {
+			t.Errorf("unexpected authorization header %q", auth)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"0"}}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Options{
+		BaseURL:      "http://models.example",
+		HTTPClient:   srv.Client(),
+		PlannerURL:   srv.URL,
+		PlannerModel: "llama-3-8b",
+	})
+	if _, err := c.Plan(context.Background(), "click", []Element{{Center: [2]float64{1, 2}}}, PlanOptions{}); err != nil {
+		t.Fatalf("Plan: %v", err)
 	}
 }

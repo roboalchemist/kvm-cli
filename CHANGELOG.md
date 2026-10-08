@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0]
+
+### Added
+
+- **Local grounding backend**: `--grounding-backend local` runs OmniParser-v2.0's
+  `icon_detect` detector (a single-class YOLOv8n, ~12 MB ONNX) in-process via
+  ONNX Runtime (purego dlopen — the binary stays CGO-free). Apple Silicon uses
+  the CoreML execution provider by default; `--ort-ep cpu|coreml|cuda` pins it.
+  `kvm-cli cua model download --yes` fetches the size- and SHA-256-pinned model;
+  `kvm-cli cua model path` prints the cache location. Local grounding returns
+  interactive icon boxes without OCR captions.
+- **Planner on any OpenAI-compatible endpoint**: `--planner-url` /
+  `KVM_PLANNER_URL` / `config set planner_url` (+ `--planner-api-key` /
+  `planner_api_key`, sent as a Bearer token). A bare base URL gets
+  `/chat/completions` appended.
+
+### Changed
+
+- `cua probe` reports the effective `planner_url` (credentials masked) and the
+  new backend/env keys are documented in docs/config.md.
+
 ## [0.4.3]
 
 ### Changed

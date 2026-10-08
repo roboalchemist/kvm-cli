@@ -13,7 +13,9 @@ import (
 	"github.com/roboalchemist/kvm-cli/pkg/auth"
 	"github.com/roboalchemist/kvm-cli/pkg/crop"
 	"github.com/roboalchemist/kvm-cli/pkg/elements"
+	"github.com/roboalchemist/kvm-cli/pkg/grounding"
 	"github.com/roboalchemist/kvm-cli/pkg/models"
+	"github.com/roboalchemist/kvm-cli/pkg/ort"
 	"github.com/roboalchemist/kvm-cli/pkg/output"
 	"github.com/roboalchemist/kvm-cli/pkg/redact"
 	"github.com/roboalchemist/kvm-cli/pkg/scratch"
@@ -28,16 +30,22 @@ const cuaAnnotateScratch = "auto"
 // cua command flags. Each is package-global because cobra binds flag pointers;
 // only one cua subcommand runs per process.
 var (
-	flagCuaModelsURL string
-	flagCuaImage     string
-	flagCuaModel     string
-	flagCuaPlanner   string
-	flagCuaBox       float64
-	flagCuaIoU       float64
-	flagCuaAnnotate  string
-	flagCuaKeepImage bool
-	flagCuaExecute   bool
-	flagCuaYes       bool
+	flagCuaModelsURL     string
+	flagCuaImage         string
+	flagCuaModel         string
+	flagCuaPlanner       string
+	flagCuaPlannerURL    string
+	flagCuaPlannerAPIKey string
+	flagCuaBackend       string
+	flagCuaModelPath     string
+	flagCuaOrtEP         string
+	flagCuaOrtLib        string
+	flagCuaBox           float64
+	flagCuaIoU           float64
+	flagCuaAnnotate      string
+	flagCuaKeepImage     bool
+	flagCuaExecute       bool
+	flagCuaYes           bool
 )
 
 // Selector flags shared by 'cua find', 'cua click' (selector mode) and
@@ -99,6 +107,26 @@ func resolveGroundingModel() string {
 	)
 }
 
+// resolvePlannerURL applies the precedence --planner-url flag >
+// KVM_PLANNER_URL > config planner_url > "" (use the models platform).
+func resolvePlannerURL() string {
+	return cuaFirstNonEmpty(
+		flagCuaPlannerURL,
+		os.Getenv("KVM_PLANNER_URL"),
+		cuaConfig().PlannerURL,
+	)
+}
+
+// resolvePlannerAPIKey applies the precedence --planner-api-key flag >
+// KVM_PLANNER_API_KEY > config planner_api_key > "" (no Authorization header).
+func resolvePlannerAPIKey() string {
+	return cuaFirstNonEmpty(
+		flagCuaPlannerAPIKey,
+		os.Getenv("KVM_PLANNER_API_KEY"),
+		cuaConfig().PlannerAPIKey,
+	)
+}
+
 // resolvePlannerModel applies the precedence
 // --planner flag > KVM_PLANNER_MODEL > config planner_model > "" (none). The
 // planner is optional: when unset, `cua click` instruction mode asks the caller
@@ -127,10 +155,12 @@ func cuaFirstNonEmpty(vals ...string) string {
 // follows the global --insecure flag.
 func cuaModelsClient() *models.Client {
 	return models.NewClient(models.Options{
-		BaseURL:      resolveModelsURL(),
-		PlannerModel: resolvePlannerModel(),
-		Timeout:      cuaModelsTimeout(),
-		Insecure:     flagInsecure,
+		BaseURL:       resolveModelsURL(),
+		PlannerModel:  resolvePlannerModel(),
+		PlannerURL:    resolvePlannerURL(),
+		PlannerAPIKey: resolvePlannerAPIKey(),
+		Timeout:       cuaModelsTimeout(),
+		Insecure:      flagInsecure,
 	})
 }
 
@@ -192,6 +222,86 @@ func cuaResolveModels(ctx context.Context, client *models.Client) (grounding, pl
 	}
 	client.GroundingModel = grounding
 	return grounding, planner, nil
+}
+
+// resolveGroundingBackend applies the precedence --grounding-backend flag >
+// KVM_GROUNDING_BACKEND > config grounding_backend > platform.
+func resolveGroundingBackend() string {
+	return cuaFirstNonEmpty(
+		flagCuaBackend,
+		os.Getenv("KVM_GROUNDING_BACKEND"),
+		cuaConfig().GroundingBackend,
+	)
+}
+
+// newGroundingProvider builds the grounding provider for the resolved backend.
+// The platform backend wraps the shared models-platform client; the local
+// backend runs the pinned icon_detect YOLO model in-process via ONNX Runtime.
+func newGroundingProvider(client *models.Client) (grounding.Provider, error) {
+	backend := resolveGroundingBackend()
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case "", grounding.BackendPlatform:
+		return &grounding.PlatformProvider{Client: client}, nil
+	case grounding.BackendLocal:
+		modelPath := cuaFirstNonEmpty(
+			flagCuaModelPath,
+			os.Getenv("KVM_GROUNDING_MODEL_PATH"),
+		)
+		if modelPath == "" {
+			var err error
+			modelPath, err = grounding.DefaultModelPath()
+			if err != nil {
+				return nil, err
+			}
+		}
+		if _, err := os.Stat(modelPath); err != nil {
+			return nil, output.NewCodedError("MODEL_REQUIRED",
+				fmt.Sprintf("local grounding model not found at %s", modelPath))
+		}
+		epMode := cuaFirstNonEmpty(flagCuaOrtEP, os.Getenv("KVM_ORT_EP"), "auto")
+		if err := ort.ValidateMode(epMode); err != nil {
+			return nil, output.NewCodedError("USAGE", err.Error())
+		}
+		libPath := ort.DiscoverLib(cuaFirstNonEmpty(flagCuaOrtLib, os.Getenv("KVM_ONNXRUNTIME_LIB")))
+		return &grounding.LocalProvider{
+			ModelPath: modelPath,
+			LibPath:   libPath,
+			EPs:       ort.ExecutionProviders(epMode),
+		}, nil
+	default:
+		return nil, output.NewCodedError("USAGE",
+			fmt.Sprintf("unknown grounding backend %q (want %q or %q)", backend, grounding.BackendPlatform, grounding.BackendLocal))
+	}
+}
+
+// cuaGroundFrame grounds one frame through the configured backend and maps the
+// result onto the models.GroundResult shape the commands already consume.
+func cuaGroundFrame(ctx context.Context, client *models.Client, imagePath string, opts models.GroundOptions) (*models.GroundResult, error) {
+	if opts.IncludeAnnotated && strings.EqualFold(resolveGroundingBackend(), grounding.BackendLocal) {
+		return nil, output.NewCodedError("USAGE",
+			"--annotate requires the platform grounding backend (local grounding returns boxes without OCR content)")
+	}
+	provider, err := newGroundingProvider(client)
+	if err != nil {
+		return nil, err
+	}
+	res, err := provider.Ground(ctx, imagePath, grounding.Options{
+		BoxThreshold:     opts.BoxThreshold,
+		IouThreshold:     opts.IouThreshold,
+		IncludeAnnotated: opts.IncludeAnnotated,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &models.GroundResult{
+		Model:          "icon_detect-" + res.Backend,
+		Width:          res.Width,
+		Height:         res.Height,
+		Count:          res.Count,
+		Elements:       res.Elements,
+		ElapsedMS:      res.ElapsedMS,
+		AnnotatedImage: res.AnnotatedImage,
+	}, nil
 }
 
 // cuaRequirePlanner returns a coded error when no planner (chat) model is
@@ -396,8 +506,10 @@ func cuaLoadElements(ctx context.Context, cmd *cobra.Command, client *models.Cli
 	if err != nil {
 		return nil, "", "", nil, err
 	}
-	cuaResolveGrounding(ctx, client)
-	res, gerr := client.Ground(ctx, imagePath, models.GroundOptions{
+	if !strings.EqualFold(resolveGroundingBackend(), grounding.BackendLocal) {
+		cuaResolveGrounding(ctx, client)
+	}
+	res, gerr := cuaGroundFrame(ctx, client, imagePath, models.GroundOptions{
 		BoxThreshold: flagCuaBox,
 		IouThreshold: flagCuaIoU,
 	})
@@ -518,30 +630,46 @@ type cuaProbeOutput struct {
 	ModelsURL      string `json:"models_url"`
 	GroundingModel string `json:"grounding_model"`
 	PlannerModel   string `json:"planner_model,omitempty"`
+	PlannerURL     string `json:"planner_url,omitempty"`
 }
 
 // ---- command group ----------------------------------------------------------
 
 var cuaCmd = &cobra.Command{
 	Use:   "cua",
-	Short: "Computer-use assistance: ground, plan, and click through the models platform",
-	Long: `Computer-use assistance (CUA) commands built on the personal models platform.
+	Short: "Computer-use assistance: ground, plan, and click (hosted platform or local ONNX)",
+	Long: `Computer-use assistance (CUA) commands turn a screenshot into a numbered
+Set-of-Mark element list (grounding) and resolve clicks against it.
 
-These commands turn a screenshot into a set-of-mark numbered element list
-(OmniParser "grounding"), let a chat model choose the element matching an
-instruction (the "planner"), and can optionally perform the resulting click on
-the target over the HID WebSocket.
+Grounding backends (--grounding-backend, env KVM_GROUNDING_BACKEND):
+  platform (default)  the models platform's OmniParser endpoint (OCR + labels)
+  local               in-process ONNX Runtime running the pinned icon_detect
+                      YOLO model (~12 MB; icon boxes only, no OCR captions).
+                      Requires ONNX Runtime ('brew install onnxruntime') and the
+                      model file ('kvm-cli cua model download --yes').
+
+The planner (element chooser for instruction-mode clicks) is optional. Opt in
+with --planner auto (models-platform chat model) or point it at ANY
+OpenAI-compatible endpoint with --planner-url (+ --planner-api-key,
+--planner <model-id>). Without a planner, pick elements yourself from
+'cua find' output and click via --index/--id/--text.
+
+Every grounding path also accepts --vnc (with --vnc-username/--vnc-password)
+to capture over VNC instead of the KVM.
 
 The element list — never image bytes — is what reaches the planner, so prompts
 stay small and images stay out of the model context.
 
-Configuration (flag > environment > config > auto-pick > default):
-  --models-url / KVM_MODELS_URL / models_url        default https://models.example.com
-  --model      / KVM_GROUNDING_MODEL / grounding_model   default auto (a running grounding model)
-  --planner    / KVM_PLANNER_MODEL / planner_model       optional; 'auto' = pick a running chat model
-  --scratch-dir / KVM_SCRATCH_DIR / scratch_dir          default OS temp dir
+Configuration (flag > environment > config > default):
+  --models-url / KVM_MODELS_URL / models_url          default https://models.example.com
+  --model      / KVM_GROUNDING_MODEL / grounding_model      default auto (a running grounding model)
+  --planner    / KVM_PLANNER_MODEL / planner_model          optional; 'auto' = pick a running chat model
+  --planner-url / KVM_PLANNER_URL / planner_url              any OpenAI-compatible chat endpoint
+  --grounding-backend / KVM_GROUNDING_BACKEND / grounding_backend   platform (default) or local
+  --scratch-dir / KVM_SCRATCH_DIR / scratch_dir              default OS temp dir
 
-Run 'kvm-cli cua models' to see which grounding and chat models are available.`,
+Run 'kvm-cli cua models' to see which grounding and chat models are available
+on the platform.`,
 	Example: `  kvm-cli cua models
   kvm-cli cua probe
   kvm-cli cua ground
@@ -669,11 +797,13 @@ func runCuaProbe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	plannerURL := resolvePlannerURL()
 	out := cuaProbeOutput{
 		Message:        msg,
 		ModelsURL:      redact.Params(resolveModelsURL()),
 		GroundingModel: grounding,
 		PlannerModel:   planner,
+		PlannerURL:     redact.Params(plannerURL),
 	}
 	td := output.TableData{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
 		{"message", out.Message},
@@ -681,7 +811,113 @@ func runCuaProbe(cmd *cobra.Command, args []string) error {
 		{"grounding_model", out.GroundingModel},
 		{"planner_model", emptyDash(out.PlannerModel)},
 	}}
+	if plannerURL != "" {
+		td.Rows = append(td.Rows, []string{"planner_url", out.PlannerURL})
+	}
 	return output.Render(td, out, GetOutputOptions())
+}
+
+// ---- cua model --------------------------------------------------------------
+
+var (
+	flagCuaModelDownloadOutput string
+	flagCuaModelDownloadYes    bool
+)
+
+var cuaModelCmd = &cobra.Command{
+	Use:   "model",
+	Short: "Manage the local grounding model",
+	Long: `Manage the on-disk icon_detect ONNX model used by the local grounding
+backend (--grounding-backend local). The model is a ~12 MB single-class YOLOv8n
+export of OmniParser-v2.0's detector, pinned by size and SHA-256.`,
+	Example: "  kvm-cli cua model download --yes\n  kvm-cli cua model path",
+}
+
+var cuaModelDownloadCmd = &cobra.Command{
+	Use:   "download",
+	Short: "Download the pinned icon_detect model for local grounding",
+	Long: `Download the icon_detect ONNX model into the local model cache (or -o path),
+verifying the pinned size and SHA-256 before an atomic rename.
+
+This is a write action: pass --yes (or -f/--force) to run it; --dry-run previews
+the destination and source without touching the network.`,
+	Args:    cobra.NoArgs,
+	Example: "  kvm-cli cua model download --yes\n  kvm-cli cua model download --dry-run",
+	RunE:    runCuaModelDownload,
+}
+
+func runCuaModelDownload(cmd *cobra.Command, args []string) error {
+	dest := strings.TrimSpace(flagCuaModelDownloadOutput)
+	if dest == "" {
+		var err error
+		dest, err = grounding.DefaultModelPath()
+		if err != nil {
+			return err
+		}
+	}
+	opts := GetOutputOptions()
+	if flagDryRun {
+		exists := "false"
+		if _, err := os.Stat(dest); err == nil {
+			exists = "true"
+		}
+		out := map[string]any{
+			"dry_run": true, "url": grounding.DefaultModelURL, "path": dest,
+			"bytes": grounding.DefaultModelBytes, "sha256": grounding.DefaultModelSHA256, "exists": exists,
+		}
+		td := output.TableData{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
+			{"dry_run", "true"}, {"url", grounding.DefaultModelURL}, {"path", dest},
+			{"bytes", strconv.FormatInt(grounding.DefaultModelBytes, 10)},
+			{"sha256", grounding.DefaultModelSHA256}, {"exists", exists},
+		}}
+		return output.Render(td, out, opts)
+	}
+	if err := vmRequireYes(flagCuaModelDownloadYes, "download the local grounding model"); err != nil {
+		return err
+	}
+	start := time.Now()
+	if err := grounding.DownloadModel(cmd.Context(), dest, grounding.DefaultModelURL); err != nil {
+		return err
+	}
+	if err := grounding.VerifyModel(dest); err != nil {
+		return err
+	}
+	elapsed := float64(time.Since(start).Microseconds()) / 1000.0
+	fmt.Fprintf(os.Stderr, "Saved %s (%d bytes verified) in %.0fms\n", dest, grounding.DefaultModelBytes, elapsed)
+	out := map[string]any{
+		"path": dest, "bytes": grounding.DefaultModelBytes,
+		"sha256": grounding.DefaultModelSHA256, "elapsed_ms": elapsed,
+	}
+	td := output.TableData{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
+		{"path", dest}, {"bytes", strconv.FormatInt(grounding.DefaultModelBytes, 10)},
+		{"sha256", grounding.DefaultModelSHA256},
+	}}
+	return output.Render(td, out, opts)
+}
+
+var cuaModelPathCmd = &cobra.Command{
+	Use:     "path",
+	Short:   "Print the local grounding model cache path",
+	Args:    cobra.NoArgs,
+	Example: "  kvm-cli cua model path",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		p, err := grounding.DefaultModelPath()
+		if err != nil {
+			return err
+		}
+		out := map[string]any{"path": p, "exists": false}
+		if _, err := os.Stat(p); err == nil {
+			out["exists"] = true
+		}
+		exists := "false"
+		if out["exists"] == true {
+			exists = "true"
+		}
+		td := output.TableData{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
+			{"path", p}, {"exists", exists},
+		}}
+		return output.Render(td, out, GetOutputOptions())
+	},
 }
 
 // ---- cua ground -------------------------------------------------------------
@@ -722,8 +958,10 @@ func runCuaGround(cmd *cobra.Command, args []string) error {
 	annotate := strings.TrimSpace(flagCuaAnnotate) != ""
 	client := cuaModelsClient()
 	ctx := context.Background()
-	cuaResolveGrounding(ctx, client)
-	res, err := client.Ground(ctx, imagePath, models.GroundOptions{
+	if !strings.EqualFold(resolveGroundingBackend(), grounding.BackendLocal) {
+		cuaResolveGrounding(ctx, client)
+	}
+	res, err := cuaGroundFrame(ctx, client, imagePath, models.GroundOptions{
 		BoxThreshold:     flagCuaBox,
 		IouThreshold:     flagCuaIoU,
 		IncludeAnnotated: annotate,
@@ -1119,8 +1357,12 @@ func cuaClickPlanner(cmd *cobra.Command, ctx context.Context, client *models.Cli
 		// Covers planner_model=auto resolving to nothing on the catalog.
 		return err
 	}
+	if resolvePlannerURL() != "" && planner == "" {
+		return output.NewCodedError("USAGE",
+			"planner_url is set but no planner model id was given; pass --planner <id> (OpenAI-compatible servers need the model name)")
+	}
 
-	ground, err := client.Ground(ctx, imagePath, models.GroundOptions{
+	ground, err := cuaGroundFrame(ctx, client, imagePath, models.GroundOptions{
 		BoxThreshold:     flagCuaBox,
 		IouThreshold:     flagCuaIoU,
 		IncludeAnnotated: annotate,
@@ -1484,6 +1726,22 @@ func init() {
 	for _, c := range []*cobra.Command{cuaModelsCmd, cuaProbeCmd, cuaStatusCmd, cuaClickCmd} {
 		c.Flags().StringVar(&flagCuaPlanner, "planner", "",
 			"Planner chat model id (env: KVM_PLANNER_MODEL; optional - omit to plan yourself, or 'auto')")
+		c.Flags().StringVar(&flagCuaPlannerURL, "planner-url", "",
+			"Planner chat-completions endpoint: any OpenAI-compatible server (env: KVM_PLANNER_URL; empty = the models platform)")
+		c.Flags().StringVar(&flagCuaPlannerAPIKey, "planner-api-key", "",
+			"Bearer token for --planner-url (env: KVM_PLANNER_API_KEY)")
+	}
+
+	// Backend selection applies to every grounding path.
+	for _, c := range []*cobra.Command{cuaGroundCmd, cuaClickCmd, cuaFindCmd, cuaWaitCmd, cuaTextCmd, cuaParseCmd} {
+		c.Flags().StringVar(&flagCuaBackend, "grounding-backend", "",
+			"Where element grounding runs: platform (default) or local (in-process ONNX Runtime) (env: KVM_GROUNDING_BACKEND)")
+		c.Flags().StringVar(&flagCuaModelPath, "grounding-model-path", "",
+			"Local backend: path to the icon_detect ONNX model (env: KVM_GROUNDING_MODEL_PATH; default the cache path)")
+		c.Flags().StringVar(&flagCuaOrtEP, "ort-ep", "",
+			"Local backend ONNX execution provider: auto (default), cpu, coreml or cuda (env: KVM_ORT_EP)")
+		c.Flags().StringVar(&flagCuaOrtLib, "onnxruntime-lib", "",
+			"Local backend: path to libonnxruntime (env: KVM_ONNXRUNTIME_LIB; default searches standard paths)")
 	}
 
 	// Thresholds apply to every grounding path.
@@ -1538,6 +1796,11 @@ func init() {
 	cuaClickCmd.Flags().BoolVar(&flagCuaExecute, "execute", false, "Move the mouse and click the resolved element (requires --yes)")
 	vmRegisterConfirm(cuaClickCmd, &flagCuaYes, "Confirm moving and clicking the remote mouse (required with --execute)")
 
-	cuaCmd.AddCommand(cuaModelsCmd, cuaProbeCmd, cuaStatusCmd, cuaGroundCmd, cuaClickCmd, cuaFindCmd, cuaWaitCmd, cuaTextCmd, cuaParseCmd)
+	vmRegisterConfirm(cuaModelDownloadCmd, &flagCuaModelDownloadYes, "Confirm downloading the local grounding model")
+	cuaModelDownloadCmd.Flags().StringVarP(&flagCuaModelDownloadOutput, "output", "o", "",
+		"Destination path for the ONNX model (default: the cache path)")
+	cuaModelCmd.AddCommand(cuaModelDownloadCmd, cuaModelPathCmd)
+
+	cuaCmd.AddCommand(cuaModelsCmd, cuaProbeCmd, cuaStatusCmd, cuaGroundCmd, cuaClickCmd, cuaFindCmd, cuaWaitCmd, cuaTextCmd, cuaParseCmd, cuaModelCmd)
 	rootCmd.AddCommand(cuaCmd)
 }

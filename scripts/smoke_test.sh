@@ -398,6 +398,55 @@ rm -rf "$TMP_HOME" 2>/dev/null || true
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Local grounding + planner endpoints (help surfaces; no network, no ORT)
+# ---------------------------------------------------------------------------
+section "CUA local grounding + planner endpoints"
+for c in "cua model --help" "cua model download --help" "cua model path --help" "cua ground --help" "cua click --help" "cua find --help" "cua text --help" "cua wait --help" "cua parse --help"; do
+  if HOME="$(mktemp -d)" "$BIN" $c >/dev/null 2>&1; then
+    pass "$c exits 0"
+  else
+    fail "$c exited non-zero"
+  fi
+done
+
+# New flags must be registered on the grounding commands.
+for f in "--grounding-backend" "--grounding-model-path" "--ort-ep" "--onnxruntime-lib"; do
+  if HOME="$(mktemp -d)" "$BIN" cua ground --help 2>&1 | grep -q -- "$f"; then
+    pass "cua ground documents $f"
+  else
+    fail "cua ground --help missing $f"
+  fi
+done
+if HOME="$(mktemp -d)" "$BIN" cua click --help 2>&1 | grep -q -- "--planner-url"; then
+  pass "cua click documents --planner-url"
+else
+  fail "cua click --help missing --planner-url"
+fi
+
+# cua model download --dry-run previews without touching the network.
+OUT="$(HOME="$(mktemp -d)" "$BIN" cua model download --dry-run -j 2>/dev/null)"
+if printf '%s' "$OUT" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["dry_run"] is True and d["bytes"]>0 and len(d["sha256"])==64' 2>/dev/null; then
+  pass "cua model download --dry-run previews pinned model"
+else
+  fail "cua model download --dry-run did not emit the pinned-model preview"
+fi
+
+# cua model path prints the cache location.
+if HOME="$(mktemp -d)" "$BIN" cua model path 2>/dev/null | grep -q "model.onnx"; then
+  pass "cua model path prints cache path"
+else
+  fail "cua model path did not print the cache path"
+fi
+
+# Local + --annotate must be refused with a clear error.
+OUT="$(HOME="$(mktemp -d)" "$BIN" cua ground --image /dev/null --grounding-backend local --annotate /tmp/som.png 2>&1 || true)"
+if printf '%s' "$OUT" | grep -q "annotate requires the platform"; then
+  pass "local backend refuses --annotate with guidance"
+else
+  fail "local + --annotate not refused with guidance: $(printf '%s' "$OUT" | head -n1)"
+fi
+
 printf '\n=== Results: %d passed, %d failed ===\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then
   printf '\nFailed checks:\n%s' "$FAILED"

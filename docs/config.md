@@ -109,6 +109,9 @@ are recognised; unknown keys are ignored.
 | `models_url` | string | `"https://models.example.com"` | `config set models_url` | CUA models-platform root |
 | `grounding_model` | string | `"omniparser"` | `config set grounding_model` | OmniParser grounding (screen-parser) model id |
 | `planner_model` | string | *(empty)* | `config set planner_model` | CUA planner (element-chooser) chat model id; **optional** — empty disables the planner (the caller picks elements via `cua find` + selector clicks); the value `auto` picks a running chat model |
+| `planner_url` | string | *(empty)* | `config set planner_url` | Any OpenAI-compatible chat-completions endpoint for the planner (a bare base gets `/chat/completions` appended). Empty uses the models platform. Non-secret |
+| `planner_api_key` | string | *(empty)* | `config set planner_api_key` | Bearer token sent to `planner_url`. Secret (masked in output) |
+| `grounding_backend` | string | `platform` | `config set grounding_backend` | Where element grounding runs: `platform` (models-platform OmniParser) or `local` (in-process ONNX Runtime icon_detect, boxes only) |
 | `scratch_dir` | string | OS temp dir | `config set scratch_dir` | Directory for transient screenshots / Set-of-Mark PNGs |
 
 `config list` omits unset keys and `insecure=false`. `config unset <key>`
@@ -164,6 +167,9 @@ removes a key and restores its built-in default.
 | CUA models platform | `https://models.example.com` | `--models-url`, `KVM_MODELS_URL`, `models_url` |
 | CUA grounding model | `omniparser` | `--model`, `KVM_GROUNDING_MODEL`, `grounding_model` |
 | CUA planner model | *(none — optional)* | `--planner`, `KVM_PLANNER_MODEL`, `planner_model` |
+| CUA planner endpoint | *(empty — use platform)* | `--planner-url`, `KVM_PLANNER_URL`, `planner_url` |
+| CUA planner API key | *(empty)* | `--planner-api-key`, `KVM_PLANNER_API_KEY`, `planner_api_key` |
+| Grounding backend | `platform` | `--grounding-backend`, `KVM_GROUNDING_BACKEND`, `grounding_backend` |
 | Scratch directory | OS temp dir | `--scratch-dir`, `KVM_SCRATCH_DIR`, `scratch_dir` |
 
 ## Managing configuration

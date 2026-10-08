@@ -31,6 +31,7 @@ import (
 var ConfigKeys = []string{
 	"url", "username", "password", "timeout", "insecure",
 	"models_url", "grounding_model", "planner_model", "scratch_dir",
+	"planner_url", "planner_api_key", "grounding_backend",
 }
 
 // Config is the persisted CLI configuration stored at
@@ -51,8 +52,17 @@ type Config struct {
 	// the built-in default (omniparser). Non-secret.
 	GroundingModel string `json:"grounding_model,omitempty"`
 	// PlannerModel is the chat model used as the element chooser. Empty means
-	// "auto": pick a running chat model from the catalog. Non-secret.
+	// no planner (the caller picks elements itself); the value "auto" picks a
+	// running chat model from the catalog. Non-secret.
 	PlannerModel string `json:"planner_model,omitempty"`
+	// PlannerURL optionally points the planner at any OpenAI-compatible chat
+	// completions endpoint instead of the models platform. Non-secret.
+	PlannerURL string `json:"planner_url,omitempty"`
+	// PlannerAPIKey is the Bearer token sent to PlannerURL when set. Secret.
+	PlannerAPIKey string `json:"planner_api_key,omitempty"`
+	// GroundingBackend selects where element grounding runs: "platform" (the
+	// models platform, default) or "local" (in-process ONNX Runtime). Non-secret.
+	GroundingBackend string `json:"grounding_backend,omitempty"`
 	// ScratchDir is where transient artifacts (screenshots, Set-of-Mark PNGs)
 	// are written. Empty means the OS temp directory. Non-secret.
 	ScratchDir string `json:"scratch_dir,omitempty"`
@@ -94,6 +104,15 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	}
 	if v, ok := raw["planner_model"]; ok {
 		c.PlannerModel = rawString(v)
+	}
+	if v, ok := raw["planner_url"]; ok {
+		c.PlannerURL = rawString(v)
+	}
+	if v, ok := raw["planner_api_key"]; ok {
+		c.PlannerAPIKey = rawString(v)
+	}
+	if v, ok := raw["grounding_backend"]; ok {
+		c.GroundingBackend = rawString(v)
 	}
 	if v, ok := raw["scratch_dir"]; ok {
 		c.ScratchDir = rawString(v)
@@ -212,6 +231,12 @@ func SetConfigValue(key, value string) error {
 		cfg.GroundingModel = value
 	case "planner_model":
 		cfg.PlannerModel = value
+	case "planner_url":
+		cfg.PlannerURL = value
+	case "planner_api_key":
+		cfg.PlannerAPIKey = value
+	case "grounding_backend":
+		cfg.GroundingBackend = value
 	case "scratch_dir":
 		cfg.ScratchDir = value
 	}
@@ -249,6 +274,15 @@ func ListConfig() (map[string]string, error) {
 	}
 	if cfg.PlannerModel != "" {
 		out["planner_model"] = cfg.PlannerModel
+	}
+	if cfg.PlannerURL != "" {
+		out["planner_url"] = cfg.PlannerURL
+	}
+	if cfg.PlannerAPIKey != "" {
+		out["planner_api_key"] = cfg.PlannerAPIKey
+	}
+	if cfg.GroundingBackend != "" {
+		out["grounding_backend"] = cfg.GroundingBackend
 	}
 	if cfg.ScratchDir != "" {
 		out["scratch_dir"] = cfg.ScratchDir

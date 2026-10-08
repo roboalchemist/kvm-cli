@@ -558,6 +558,28 @@ planner is **optional**: with none configured, instruction-mode click fails with
 `PLANNER_REQUIRED` and guidance to pick the element yourself via `cua find` +
 selector-mode `cua click --index/--id/--text` — the usual agent loop.
 
+The planner can also target any OpenAI-compatible endpoint:
+`--planner <model> --planner-url https://host/v1 --planner-api-key $KEY`
+(env `KVM_PLANNER_URL`/`KVM_PLANNER_API_KEY`, config `planner_url`/`planner_api_key`).
+`cua probe` reports the effective `planner_url` (credentials masked).
+
+### Grounding backends
+
+`--grounding-backend` (env `KVM_GROUNDING_BACKEND`, config `grounding_backend`)
+selects where element detection runs:
+
+| Backend | What it gives you | Needs |
+|---------|-------------------|-------|
+| `platform` (default) | OCR'd, labelled Set-of-Mark elements; annotated images (`--annotate`) | the models platform |
+| `local` | interactive icon **boxes only** (no OCR captions) | ONNX Runtime (`brew install onnxruntime`) + the pinned model (`kvm-cli cua model download --yes`, ~12 MB, SHA-256-verified) |
+
+Local grounding runs the OmniParser-v2.0 `icon_detect` detector (single-class
+YOLOv8n, 640px letterbox, conf 0.05 / NMS IoU 0.1 — the same thresholds as the
+platform) in-process via `--ort-ep auto` (CoreML on Apple Silicon, CPU
+elsewhere; `--ort-ep cpu|coreml|cuda` to pin it). Elements come back as
+`type: icon` with empty `content` — read the screenshot itself for semantics.
+`kvm-cli cua model path` prints the cache location.
+
 The deterministic selector flags below are shared by `cua find`, `cua click` and
 `cua wait`:
 

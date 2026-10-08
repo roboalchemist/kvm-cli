@@ -149,6 +149,24 @@ element matching a natural-language instruction, but the default flow is
 planner-free: the calling agent reads the element list and clicks via a selector
 (`cua click --index/--text/--id`) — no chat model required.
 
+Grounding runs wherever you want (`--grounding-backend`, env
+`KVM_GROUNDING_BACKEND`):
+
+- `platform` (default) — the models platform's OmniParser endpoint (OCR + labels).
+- `local` — the pinned **icon_detect** YOLO model (a ~12 MB single-class YOLOv8n
+  ONNX export of OmniParser-v2.0's detector) runs **in-process** via ONNX
+  Runtime: `brew install onnxruntime`, then `kvm-cli cua model download --yes`.
+  Works on Apple Silicon (CoreML EP via `--ort-ep coreml`/`auto`) and CUDA. Local
+  grounding returns interactive icon **boxes only** — no OCR captions — so the
+  calling agent reads the screenshot itself; `--annotate` and `cua text`-style
+  OCR content require the platform backend.
+
+The planner (instruction-mode clicks) targets any **OpenAI-compatible
+endpoint**: `--planner <model> --planner-url https://host/v1
+--planner-api-key $KEY` (or `KVM_PLANNER_URL`/`KVM_PLANNER_API_KEY`/
+`config set planner_url|planner_api_key`). Without it, kvm-cli stays
+planner-free.
+
 ```bash
 # SEE — capture to a temp file (scratch dir, never the CWD)
 kvm-cli screenshot

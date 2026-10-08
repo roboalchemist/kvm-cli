@@ -83,11 +83,28 @@ func (c *Client) Plan(ctx context.Context, instruction string, elements []Elemen
 		return nil, redact.Error(fmt.Errorf("models: encode plan request: %w", err))
 	}
 
-	path := "/model/" + url.PathEscape(model) + "/v1/chat/completions"
-	start := time.Now()
 	var wire chatResponse
-	if err := c.do(ctx, http.MethodPost, path, "application/json", body, &wire); err != nil {
-		return nil, err
+	start := time.Now()
+	if c.PlannerURL != "" {
+		// Any OpenAI-compatible endpoint: POST <planner-url>/chat/completions
+		// (a URL already ending in /chat/completions is used verbatim) with an
+		// optional Bearer token.
+		target := strings.TrimRight(c.PlannerURL, "/")
+		if !strings.HasSuffix(target, "/chat/completions") {
+			target += "/chat/completions"
+		}
+		var headers map[string]string
+		if c.PlannerAPIKey != "" {
+			headers = map[string]string{"Authorization": "Bearer " + c.PlannerAPIKey}
+		}
+		if err := c.doRaw(ctx, http.MethodPost, target, headers, "application/json", body, &wire); err != nil {
+			return nil, err
+		}
+	} else {
+		path := "/model/" + url.PathEscape(model) + "/v1/chat/completions"
+		if err := c.do(ctx, http.MethodPost, path, "application/json", body, &wire); err != nil {
+			return nil, err
+		}
 	}
 	latency := float64(time.Since(start).Microseconds()) / 1000.0
 
