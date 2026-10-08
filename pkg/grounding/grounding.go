@@ -58,6 +58,8 @@ type Result struct {
 	Backend   string
 	Width     int
 	Height    int
+	// Model names the grounding model/tier that produced the result.
+	Model string
 	// AnnotatedImage is the base64 Set-of-Mark PNG. Only the platform backend
 	// produces one; the local backend leaves it empty.
 	AnnotatedImage string
@@ -90,6 +92,7 @@ func (p *PlatformProvider) Ground(ctx context.Context, imagePath string, opts Op
 		Backend:        BackendPlatform,
 		Width:          res.Width,
 		Height:         res.Height,
+		Model:          res.Model,
 		AnnotatedImage: res.AnnotatedImage,
 	}, nil
 }

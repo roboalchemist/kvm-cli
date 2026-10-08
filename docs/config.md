@@ -111,7 +111,10 @@ are recognised; unknown keys are ignored.
 | `planner_model` | string | *(empty)* | `config set planner_model` | CUA planner (element-chooser) chat model id; **optional** — empty disables the planner (the caller picks elements via `cua find` + selector clicks); the value `auto` picks a running chat model |
 | `planner_url` | string | *(empty)* | `config set planner_url` | Any OpenAI-compatible chat-completions endpoint for the planner (a bare base gets `/chat/completions` appended). Empty uses the models platform. Non-secret |
 | `planner_api_key` | string | *(empty)* | `config set planner_api_key` | Bearer token sent to `planner_url`. Secret (masked in output) |
-| `grounding_backend` | string | `platform` | `config set grounding_backend` | Where element grounding runs: `platform` (models-platform OmniParser) or `local` (in-process ONNX Runtime icon_detect, boxes only) |
+| `grounding_backend` | string | `platform` | `config set grounding_backend` | Where element grounding runs: `platform` (models-platform OmniParser) or `local` (in-process ONNX Runtime icon_detect) |
+| `local_captioner` | string | *(empty)* | `config set local_captioner` | `1`/`true` enables grounding tier 1: local YOLO + local Florence-2 captions (managed uv sidecar) |
+| `grounding_escalate` | string | `never` | `config set grounding_escalate` | `on-empty` escalates the grounding ladder (local → local+florence → platform) when the selected tier finds zero elements |
+| `captioner_url` | string | *(empty)* | `config set captioner_url` | Captioning sidecar endpoint override (default the managed sidecar on 127.0.0.1:8618). Non-secret |
 | `scratch_dir` | string | OS temp dir | `config set scratch_dir` | Directory for transient screenshots / Set-of-Mark PNGs |
 
 `config list` omits unset keys and `insecure=false`. `config unset <key>`

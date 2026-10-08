@@ -131,6 +131,7 @@ Priority chain per field: flags > `KVM_*` env > `GLKVM_*` env > gopass
 - Screenshots (`screenshot`, `streamer snapshot`) default to a timestamped file in the scratch dir, never the CWD; override with `--scratch-dir`/`KVM_SCRATCH_DIR`/`scratch_dir`.
 - `kvm-cli cua` resolution: only the grounded element list reaches the planner — image bytes are never put in the model context.
 - CUA grounding backends: `--grounding-backend platform|local` — local runs the pinned icon_detect YOLO ONNX (~12 MB) in-process via ONNX Runtime (`cua model download --yes`; CoreML/CUDA/CPU EPs; icon boxes only, no OCR).
+- CUA grounding tiers: `--local-captions` adds a local Florence-2 captioner (uv sidecar, `cua captioner serve|status|stop`) that labels each YOLO crop on-device; `--escalate on-empty` opts into the ladder local → local+florence → platform (final tier reported in `model`).
 - CUA planner: optional; any OpenAI-compatible endpoint via `--planner-url`/`KVM_PLANNER_URL` (+`--planner-api-key`), or `--planner auto` for a models-platform chat model; default planner-free (agent picks via `cua find` + selector click).
 - The device uses a self-signed/invalid TLS certificate; `kvm-cli` auto-falls back to insecure TLS with a warning.
 - `config` file: `~/.config/kvm-cli/config.json` (mode `0600`). See [docs/config.md](docs/config.md).

@@ -447,6 +447,25 @@ else
   fail "local + --annotate not refused with guidance: $(printf '%s' "$OUT" | head -n1)"
 fi
 
+# ---------------------------------------------------------------------------
+# Captioner sidecar + escalation ladder (help surfaces; no network)
+# ---------------------------------------------------------------------------
+section "CUA captioner + escalation"
+for c in "cua captioner --help" "cua captioner serve --help" "cua captioner status --help" "cua captioner stop --help"; do
+  if HOME="$(mktemp -d)" "$BIN" $c >/dev/null 2>&1; then
+    pass "$c exits 0"
+  else
+    fail "$c exited non-zero"
+  fi
+done
+for f in "--local-captions" "--escalate" "--captioner-url"; do
+  if HOME="$(mktemp -d)" "$BIN" cua ground --help 2>&1 | grep -q -- "$f"; then
+    pass "cua ground documents $f"
+  else
+    fail "cua ground --help missing $f"
+  fi
+done
+
 printf '\n=== Results: %d passed, %d failed ===\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then
   printf '\nFailed checks:\n%s' "$FAILED"

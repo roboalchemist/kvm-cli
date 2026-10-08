@@ -580,6 +580,21 @@ elsewhere; `--ort-ep cpu|coreml|cuda` to pin it). Elements come back as
 `type: icon` with empty `content` — read the screenshot itself for semantics.
 `kvm-cli cua model path` prints the cache location.
 
+Tier 1 adds the **local Florence-2 captioner** (`--local-captions`, env
+`KVM_LOCAL_CAPTIONER`, config `local_captioner`): a uv-managed Python sidecar
+shipped inside kvm-cli serves `microsoft/Florence-2-base`
+(`<MORE_DETAILED_CAPTION>`) with device autodetect (CUDA / MPS / CPU). Every
+detected icon crop is captioned on-device, so elements carry descriptions
+without OCR. Manage the sidecar with `kvm-cli cua captioner serve|status|stop`
+(first start downloads ~1 GB of weights). Captions are model descriptions, not
+OCR text — OCR'd text elements still require the platform tier.
+
+**Escalation ladder** (opt-in): `--escalate on-empty` (env
+`KVM_GROUNDING_ESCALATE`, config `grounding_escalate`) retries the next tier
+when grounding finds zero elements: local boxes → local+florence → platform.
+The final tier is reported in the output's `model` field
+(`icon_detect-local`, `icon_detect-local+florence`, or the platform's model id).
+
 The deterministic selector flags below are shared by `cua find`, `cua click` and
 `cua wait`:
 

@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/roboalchemist/kvm-cli/pkg/auth"
@@ -30,22 +32,28 @@ const cuaAnnotateScratch = "auto"
 // cua command flags. Each is package-global because cobra binds flag pointers;
 // only one cua subcommand runs per process.
 var (
-	flagCuaModelsURL     string
-	flagCuaImage         string
-	flagCuaModel         string
-	flagCuaPlanner       string
-	flagCuaPlannerURL    string
-	flagCuaPlannerAPIKey string
-	flagCuaBackend       string
-	flagCuaModelPath     string
-	flagCuaOrtEP         string
-	flagCuaOrtLib        string
-	flagCuaBox           float64
-	flagCuaIoU           float64
-	flagCuaAnnotate      string
-	flagCuaKeepImage     bool
-	flagCuaExecute       bool
-	flagCuaYes           bool
+	flagCuaModelsURL         string
+	flagCuaImage             string
+	flagCuaModel             string
+	flagCuaPlanner           string
+	flagCuaPlannerURL        string
+	flagCuaPlannerAPIKey     string
+	flagCuaBackend           string
+	flagCuaModelPath         string
+	flagCuaOrtEP             string
+	flagCuaOrtLib            string
+	flagCuaLocalCaptions     bool
+	flagCuaCaptionerServeYes bool
+	flagCuaEscalate          string
+	flagCaptionerURL         string
+	flagCaptionerPort        int
+	flagCaptionerDevice      string
+	flagCuaBox               float64
+	flagCuaIoU               float64
+	flagCuaAnnotate          string
+	flagCuaKeepImage         bool
+	flagCuaExecute           bool
+	flagCuaYes               bool
 )
 
 // Selector flags shared by 'cua find', 'cua click' (selector mode) and
@@ -234,19 +242,121 @@ func resolveGroundingBackend() string {
 	)
 }
 
-// newGroundingProvider builds the grounding provider for the resolved backend.
-// The platform backend wraps the shared models-platform client; the local
-// backend runs the pinned icon_detect YOLO model in-process via ONNX Runtime.
-func newGroundingProvider(client *models.Client) (grounding.Provider, error) {
-	backend := resolveGroundingBackend()
-	switch strings.ToLower(strings.TrimSpace(backend)) {
+// SetCaptionerScript installs the embedded captioning sidecar source (called
+// from main.go, mirroring SetSkillData).
+func SetCaptionerScript(src string) { grounding.SetCaptionerScript(src) }
+
+// resolveLocalCaptions applies the precedence --local-captions flag >
+// KVM_LOCAL_CAPTIONER > config local_captioner > false.
+func resolveLocalCaptions() bool {
+	if flagCuaLocalCaptions {
+		return true
+	}
+	if v := strings.TrimSpace(os.Getenv("KVM_LOCAL_CAPTIONER")); v != "" {
+		return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+	}
+	switch strings.TrimSpace(cuaConfig().LocalCaptioner) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+// resolveEscalate applies the precedence --escalate flag > KVM_GROUNDING_ESCALATE
+// > config grounding_escalate > "never".
+func resolveEscalate() string {
+	return cuaFirstNonEmpty(
+		flagCuaEscalate,
+		os.Getenv("KVM_GROUNDING_ESCALATE"),
+		cuaConfig().GroundingEscalate,
+		"never",
+	)
+}
+
+// resolveCaptionerURL applies the precedence --captioner-url flag >
+// KVM_CAPTIONER_URL > config captioner_url > the managed-sidecar default.
+func resolveCaptionerURL() string {
+	port := flagCaptionerPort
+	if port == 0 {
+		port = grounding.DefaultCaptionerPort
+	}
+	return cuaFirstNonEmpty(
+		flagCaptionerURL,
+		os.Getenv("KVM_CAPTIONER_URL"),
+		cuaConfig().CaptionerURL,
+		grounding.CaptionerBaseURL(port),
+	)
+}
+
+// buildLocalTier constructs the local grounding tiers. Tier 0 is YOLO boxes;
+// tier 1 (opt-in via --local-captions) adds the local Florence-2 captioner.
+func buildLocalTier(ctx context.Context, modelPath string) (*grounding.Tier, error) {
+	epMode := cuaFirstNonEmpty(flagCuaOrtEP, os.Getenv("KVM_ORT_EP"), "auto")
+	if err := ort.ValidateMode(epMode); err != nil {
+		return nil, output.NewCodedError("USAGE", err.Error())
+	}
+	libPath := ort.DiscoverLib(cuaFirstNonEmpty(flagCuaOrtLib, os.Getenv("KVM_ONNXRUNTIME_LIB")))
+	yolo := &grounding.LocalProvider{
+		ModelPath: modelPath,
+		LibPath:   libPath,
+		EPs:       ort.ExecutionProviders(epMode),
+	}
+	if !resolveLocalCaptions() {
+		return &grounding.Tier{Name: "local", Provider: yolo}, nil
+	}
+	// Tier 1 is the primary path when opted in: YOLO + local Florence-2 captions.
+	captioner, _, err := grounding.EnsureCaptioner(ctx, resolveCaptionerURL(), flagCaptionerPort, flagCaptionerDevice, captionerReadyTimeout())
+	if err != nil {
+		return nil, output.NewCodedError("CAPTIONER_UNAVAILABLE", err.Error())
+	}
+	return &grounding.Tier{
+		Name:     "local+florence",
+		Provider: &grounding.LocalCaptionedProvider{YOLO: yolo, Captioner: captioner},
+	}, nil
+}
+
+func captionerReadyTimeout() time.Duration {
+	// First start downloads ~1 GB of model weights; give it room.
+	return 10 * time.Minute
+}
+
+// cuaGroundFrame grounds one frame through the configured backend and maps the
+// result onto the models.GroundResult shape the commands already consume.
+func cuaGroundFrame(ctx context.Context, client *models.Client, imagePath string, opts models.GroundOptions) (*models.GroundResult, error) {
+	backend := strings.ToLower(strings.TrimSpace(resolveGroundingBackend()))
+	var res *grounding.Result
+	var attempts []string
+	switch backend {
 	case "", grounding.BackendPlatform:
-		return &grounding.PlatformProvider{Client: client}, nil
+		if opts.IncludeAnnotated {
+			// Only the platform tier can produce a Set-of-Mark image, so skip
+			// the ladder when one is explicitly requested.
+			res, err2 := (&grounding.PlatformProvider{Client: client}).Ground(ctx, imagePath, grounding.Options{
+				BoxThreshold:     opts.BoxThreshold,
+				IouThreshold:     opts.IouThreshold,
+				IncludeAnnotated: true,
+			})
+			if err2 != nil {
+				return nil, err2
+			}
+			return mapGroundResult(res), nil
+		}
+		platformTier := &grounding.Tier{Name: "platform", Provider: &grounding.PlatformProvider{Client: client}}
+		var perr error
+		res, attempts, perr = platformTier.Ground(ctx, imagePath, grounding.Options{
+			BoxThreshold: opts.BoxThreshold,
+			IouThreshold: opts.IouThreshold,
+		})
+		if perr != nil {
+			return nil, perr
+		}
 	case grounding.BackendLocal:
-		modelPath := cuaFirstNonEmpty(
-			flagCuaModelPath,
-			os.Getenv("KVM_GROUNDING_MODEL_PATH"),
-		)
+		if opts.IncludeAnnotated {
+			return nil, output.NewCodedError("USAGE",
+				"--annotate requires the platform grounding backend (local grounding returns boxes without OCR content)")
+		}
+		modelPath := cuaFirstNonEmpty(flagCuaModelPath, os.Getenv("KVM_GROUNDING_MODEL_PATH"))
 		if modelPath == "" {
 			var err error
 			modelPath, err = grounding.DefaultModelPath()
@@ -258,50 +368,64 @@ func newGroundingProvider(client *models.Client) (grounding.Provider, error) {
 			return nil, output.NewCodedError("MODEL_REQUIRED",
 				fmt.Sprintf("local grounding model not found at %s", modelPath))
 		}
-		epMode := cuaFirstNonEmpty(flagCuaOrtEP, os.Getenv("KVM_ORT_EP"), "auto")
-		if err := ort.ValidateMode(epMode); err != nil {
-			return nil, output.NewCodedError("USAGE", err.Error())
+		tier, terr := buildLocalTier(ctx, modelPath)
+		if terr != nil {
+			return nil, terr
 		}
-		libPath := ort.DiscoverLib(cuaFirstNonEmpty(flagCuaOrtLib, os.Getenv("KVM_ONNXRUNTIME_LIB")))
-		return &grounding.LocalProvider{
-			ModelPath: modelPath,
-			LibPath:   libPath,
-			EPs:       ort.ExecutionProviders(epMode),
-		}, nil
+		// Opt-in escalation: local boxes -> local+florence (if opted in) -> platform.
+		if resolveEscalate() == "on-empty" {
+			tier.EscalateTo = escalateTail(tier, client)
+		}
+		var gerr error
+		res, attempts, gerr = tier.Ground(ctx, imagePath, grounding.Options{
+			BoxThreshold: opts.BoxThreshold,
+			IouThreshold: opts.IouThreshold,
+		})
+		if gerr != nil {
+			return nil, gerr
+		}
 	default:
 		return nil, output.NewCodedError("USAGE",
 			fmt.Sprintf("unknown grounding backend %q (want %q or %q)", backend, grounding.BackendPlatform, grounding.BackendLocal))
 	}
+	_ = attempts
+	return mapGroundResult(res), nil
 }
 
-// cuaGroundFrame grounds one frame through the configured backend and maps the
-// result onto the models.GroundResult shape the commands already consume.
-func cuaGroundFrame(ctx context.Context, client *models.Client, imagePath string, opts models.GroundOptions) (*models.GroundResult, error) {
-	if opts.IncludeAnnotated && strings.EqualFold(resolveGroundingBackend(), grounding.BackendLocal) {
-		return nil, output.NewCodedError("USAGE",
-			"--annotate requires the platform grounding backend (local grounding returns boxes without OCR content)")
+// escalateTail builds the continuation of the ladder after the local entry
+// tier: local captions (only when opted in) -> the hosted platform.
+func escalateTail(entry *grounding.Tier, client *models.Client) *grounding.Tier {
+	var tail *grounding.Tier
+	if resolveLocalCaptions() && entry != nil && entry.EscalateTo != nil {
+		tail = entry.EscalateTo
 	}
-	provider, err := newGroundingProvider(client)
-	if err != nil {
-		return nil, err
+	platform := &grounding.Tier{Name: "platform", Provider: &grounding.PlatformProvider{Client: client}}
+	if tail == nil {
+		return platform
 	}
-	res, err := provider.Ground(ctx, imagePath, grounding.Options{
-		BoxThreshold:     opts.BoxThreshold,
-		IouThreshold:     opts.IouThreshold,
-		IncludeAnnotated: opts.IncludeAnnotated,
-	})
-	if err != nil {
-		return nil, err
+	last := tail
+	for last.EscalateTo != nil {
+		last = last.EscalateTo
+	}
+	last.EscalateTo = platform
+	return tail
+}
+
+// mapGroundResult converts a backend-agnostic grounding result.
+func mapGroundResult(res *grounding.Result) *models.GroundResult {
+	model := res.Model
+	if model == "" {
+		model = "icon_detect-" + res.Backend
 	}
 	return &models.GroundResult{
-		Model:          "icon_detect-" + res.Backend,
+		Model:          model,
 		Width:          res.Width,
 		Height:         res.Height,
 		Count:          res.Count,
 		Elements:       res.Elements,
 		ElapsedMS:      res.ElapsedMS,
 		AnnotatedImage: res.AnnotatedImage,
-	}, nil
+	}
 }
 
 // cuaRequirePlanner returns a coded error when no planner (chat) model is
@@ -815,6 +939,119 @@ func runCuaProbe(cmd *cobra.Command, args []string) error {
 		td.Rows = append(td.Rows, []string{"planner_url", out.PlannerURL})
 	}
 	return output.Render(td, out, GetOutputOptions())
+}
+
+// ---- cua captioner ----------------------------------------------------------
+
+var (
+	flagCaptionerServePort   int
+	flagCaptionerServeDevice string
+	flagCaptionerServeModel  string
+)
+
+var cuaCaptionerCmd = &cobra.Command{
+	Use:   "captioner",
+	Short: "Manage the local Florence-2 captioning sidecar",
+	Long: `Manage the local captioning sidecar used by grounding tier 1
+(--grounding-backend local --local-captions). The sidecar is a uv-run Python
+service (shipped inside kvm-cli) that serves Florence-2 <MORE_DETAILED_CAPTION>
+over HTTP, with device autodetect: CUDA on NVIDIA, MPS on Apple Silicon, CPU
+fallback.`,
+	Example: "  kvm-cli cua captioner serve --yes\n  kvm-cli cua captioner status\n  kvm-cli cua captioner stop",
+}
+
+var cuaCaptionerServeCmd = &cobra.Command{
+	Use:   "serve",
+	Short: "Start the captioning sidecar (blocks; Ctrl-C stops it)",
+	Long: `Start the local Florence-2 captioning sidecar in the foreground.
+
+First start downloads the pinned Florence-2 model (~1 GB) from HuggingFace into
+the HuggingFace cache and can take several minutes; later starts are quick.
+Grounding with --local-captions auto-starts this sidecar on demand and reuses a
+running instance.`,
+	Args:    cobra.NoArgs,
+	Example: "  kvm-cli cua captioner serve --yes\n  kvm-cli cua captioner serve --device cpu",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := vmRequireYes(flagCuaCaptionerServeYes, "start the captioning sidecar (downloads ~1 GB of model weights on first run)"); err != nil {
+			return err
+		}
+		uv := grounding.FindUv()
+		if uv == "" {
+			return output.NewCodedError("DEVICE_ERROR",
+				"captioner sidecar needs uv (https://docs.astral.sh/uv/); install it or set KVM_UV")
+		}
+		script, err := grounding.CaptionerScriptPath()
+		if err != nil {
+			return err
+		}
+		if flagCaptionerServePort == 0 {
+			flagCaptionerServePort = grounding.DefaultCaptionerPort
+		}
+		fmt.Fprintf(os.Stderr, "Starting captioner: %s run %s --port %d\n", uv, script, flagCaptionerServePort)
+		c := exec.Command(uv, "run", script, "--port", fmt.Sprint(flagCaptionerServePort), "--host", "127.0.0.1", "--warmup")
+		if flagCaptionerServeDevice != "" {
+			c.Args = append(c.Args, "--device", flagCaptionerServeDevice)
+		}
+		logPath, lerr := grounding.CaptionerLogPath()
+		if lerr == nil {
+			lf, oerr := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+			if oerr == nil {
+				defer func() { _ = lf.Close() }()
+				c.Stdout, c.Stderr = lf, lf
+				fmt.Fprintf(os.Stderr, "Sidecar output: %s\n", logPath)
+			}
+		}
+		return c.Run()
+	},
+}
+
+var cuaCaptionerStatusCmd = &cobra.Command{
+	Use:     "status",
+	Short:   "Report the captioning sidecar health",
+	Args:    cobra.NoArgs,
+	Example: "  kvm-cli cua captioner status",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		h, err := grounding.FetchCaptionerHealth(cmd.Context(), resolveCaptionerURL())
+		if err != nil {
+			return output.NewCodedError("DEVICE_ERROR",
+				"captioner sidecar is not reachable at "+resolveCaptionerURL())
+		}
+		state := "not ready"
+		if h.Ready {
+			state = "ready"
+		}
+		out := map[string]any{"url": resolveCaptionerURL(), "state": state, "device": h.Device, "model": h.Model}
+		td := output.TableData{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
+			{"url", resolveCaptionerURL()}, {"state", state},
+			{"device", emptyDash(h.Device)}, {"model", emptyDash(h.Model)},
+		}}
+		return output.Render(td, out, GetOutputOptions())
+	},
+}
+
+var cuaCaptionerStopCmd = &cobra.Command{
+	Use:     "stop",
+	Short:   "Stop a managed captioning sidecar started by kvm-cli",
+	Args:    cobra.NoArgs,
+	Example: "  kvm-cli cua captioner stop",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		pid := grounding.ReadCaptionerPid()
+		if pid == 0 {
+			return output.NewCodedError("NOT_FOUND", "no managed captioner PID recorded")
+		}
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			return output.NewCodedError("NOT_FOUND", fmt.Sprintf("pid %d not found", pid))
+		}
+		if err := proc.Signal(syscall.SIGTERM); err != nil {
+			return output.NewCodedError("DEVICE_ERROR", fmt.Sprintf("signal pid %d: %v", pid, err))
+		}
+		out := map[string]any{"stopped": pid}
+		td := output.TableData{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
+			{"stopped", fmt.Sprint(pid)},
+		}}
+		return output.Render(td, out, GetOutputOptions())
+	},
 }
 
 // ---- cua model --------------------------------------------------------------
@@ -1754,6 +1991,14 @@ func init() {
 			"Local backend ONNX execution provider: auto (default), cpu, coreml or cuda (env: KVM_ORT_EP)")
 		c.Flags().StringVar(&flagCuaOrtLib, "onnxruntime-lib", "",
 			"Local backend: path to libonnxruntime (env: KVM_ONNXRUNTIME_LIB; default searches standard paths)")
+		c.Flags().BoolVar(&flagCuaLocalCaptions, "local-captions", false,
+			"Local backend tier 1: caption YOLO crops with the local Florence-2 sidecar (env: KVM_LOCAL_CAPTIONER)")
+		c.Flags().StringVar(&flagCuaEscalate, "escalate", "",
+			"Opt-in escalation ladder: on-empty retries the next tier (local -> local+florence -> platform) when grounding finds zero elements (env: KVM_GROUNDING_ESCALATE)")
+		c.Flags().StringVar(&flagCaptionerURL, "captioner-url", "",
+			"Captioning sidecar endpoint override (env: KVM_CAPTIONER_URL; default the managed sidecar)")
+		c.Flags().IntVar(&flagCaptionerPort, "captioner-port", grounding.DefaultCaptionerPort,
+			"Managed captioning sidecar port (default 8618)")
 	}
 
 	// Thresholds apply to every grounding path.
@@ -1807,6 +2052,13 @@ func init() {
 	// destructive step is gated locally in runCuaClick (see execute).
 	cuaClickCmd.Flags().BoolVar(&flagCuaExecute, "execute", false, "Move the mouse and click the resolved element (requires --yes)")
 	vmRegisterConfirm(cuaClickCmd, &flagCuaYes, "Confirm moving and clicking the remote mouse (required with --execute)")
+
+	vmRegisterConfirm(cuaCaptionerServeCmd, &flagCuaCaptionerServeYes, "Confirm starting the captioning sidecar")
+	cuaCaptionerServeCmd.Flags().IntVar(&flagCaptionerServePort, "port", grounding.DefaultCaptionerPort, "Sidecar port")
+	cuaCaptionerServeCmd.Flags().StringVar(&flagCaptionerServeDevice, "device", "", "Force device: cuda, mps or cpu (default autodetect)")
+	cuaCaptionerServeCmd.Flags().StringVar(&flagCaptionerServeModel, "model", "microsoft/Florence-2-base", "Florence-2 model id")
+	cuaCaptionerCmd.AddCommand(cuaCaptionerServeCmd, cuaCaptionerStatusCmd, cuaCaptionerStopCmd)
+	cuaCmd.AddCommand(cuaCaptionerCmd)
 
 	vmRegisterConfirm(cuaModelDownloadCmd, &flagCuaModelDownloadYes, "Confirm downloading the local grounding model")
 	cuaModelDownloadCmd.Flags().StringVarP(&flagCuaModelDownloadOutput, "output", "o", "",

@@ -31,7 +31,7 @@ import (
 var ConfigKeys = []string{
 	"url", "username", "password", "timeout", "insecure",
 	"models_url", "grounding_model", "planner_model", "scratch_dir",
-	"planner_url", "planner_api_key", "grounding_backend",
+	"planner_url", "planner_api_key", "grounding_backend", "local_captioner", "grounding_escalate", "captioner_url",
 }
 
 // Config is the persisted CLI configuration stored at
@@ -63,6 +63,14 @@ type Config struct {
 	// GroundingBackend selects where element grounding runs: "platform" (the
 	// models platform, default) or "local" (in-process ONNX Runtime). Non-secret.
 	GroundingBackend string `json:"grounding_backend,omitempty"`
+	// LocalCaptioner enables tier-1 local grounding (YOLO + local Florence-2
+	// captions). "1"/"true"/"yes". Non-secret.
+	LocalCaptioner string `json:"local_captioner,omitempty"`
+	// GroundingEscalate controls the opt-in escalation ladder: "on-empty" retries
+	// the next tier when grounding returns zero elements; default "never".
+	GroundingEscalate string `json:"grounding_escalate,omitempty"`
+	// CaptionerURL overrides the local captioning sidecar endpoint. Non-secret.
+	CaptionerURL string `json:"captioner_url,omitempty"`
 	// ScratchDir is where transient artifacts (screenshots, Set-of-Mark PNGs)
 	// are written. Empty means the OS temp directory. Non-secret.
 	ScratchDir string `json:"scratch_dir,omitempty"`
@@ -113,6 +121,15 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	}
 	if v, ok := raw["grounding_backend"]; ok {
 		c.GroundingBackend = rawString(v)
+	}
+	if v, ok := raw["local_captioner"]; ok {
+		c.LocalCaptioner = rawString(v)
+	}
+	if v, ok := raw["grounding_escalate"]; ok {
+		c.GroundingEscalate = rawString(v)
+	}
+	if v, ok := raw["captioner_url"]; ok {
+		c.CaptionerURL = rawString(v)
 	}
 	if v, ok := raw["scratch_dir"]; ok {
 		c.ScratchDir = rawString(v)
@@ -237,6 +254,12 @@ func SetConfigValue(key, value string) error {
 		cfg.PlannerAPIKey = value
 	case "grounding_backend":
 		cfg.GroundingBackend = value
+	case "local_captioner":
+		cfg.LocalCaptioner = value
+	case "grounding_escalate":
+		cfg.GroundingEscalate = value
+	case "captioner_url":
+		cfg.CaptionerURL = value
 	case "scratch_dir":
 		cfg.ScratchDir = value
 	}
@@ -283,6 +306,15 @@ func ListConfig() (map[string]string, error) {
 	}
 	if cfg.GroundingBackend != "" {
 		out["grounding_backend"] = cfg.GroundingBackend
+	}
+	if cfg.LocalCaptioner != "" {
+		out["local_captioner"] = cfg.LocalCaptioner
+	}
+	if cfg.GroundingEscalate != "" {
+		out["grounding_escalate"] = cfg.GroundingEscalate
+	}
+	if cfg.CaptionerURL != "" {
+		out["captioner_url"] = cfg.CaptionerURL
 	}
 	if cfg.ScratchDir != "" {
 		out["scratch_dir"] = cfg.ScratchDir

@@ -22,9 +22,13 @@ var commandsRef string
 //go:embed skill
 var skillFS embed.FS
 
+//go:embed python/caption_server.py
+var captionerScriptSrc string
+
 func main() {
 	cmd.SetVersion(version)
 	cmd.SetReadmeContents(readmeContents)
+	cmd.SetCaptionerScript(captionerScriptSrc)
 	cmd.SetSkillData(skillMD, commandsRef, skillFS)
 	if err := cmd.Execute(); err != nil {
 		os.Exit(1)

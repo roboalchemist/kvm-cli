@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0]
+
+### Added
+
+- **Local Florence-2 captioner (grounding tier 1)**: `--grounding-backend local
+  --local-captions` captions every YOLO-detected icon crop on-device using
+  `microsoft/Florence-2-base` (`<MORE_DETAILED_CAPTION>`). The captioner is a
+  uv-managed Python sidecar shipped inside kvm-cli
+  (`kvm-cli cua captioner serve|status|stop`) with device autodetect
+  (CUDA on NVIDIA, MPS on Apple Silicon, CPU fallback). Elements get model
+  descriptions in `content` — no OCR; text elements still require the platform.
+- **Opt-in escalation ladder**: `--escalate on-empty`
+  (env `KVM_GROUNDING_ESCALATE`, config `grounding_escalate`) retries the next
+  tier when grounding finds zero elements: local boxes → local+florence →
+  platform. The tier that produced the final result is reported in `model`.
+
 ## [0.5.0]
 
 ### Added

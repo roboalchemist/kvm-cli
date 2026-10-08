@@ -71,18 +71,27 @@ func (p *LocalProvider) init() error {
 	return p.initErr
 }
 
-// Ground implements Provider.
-func (p *LocalProvider) Ground(ctx context.Context, imagePath string, opts Options) (*Result, error) {
-	start := time.Now()
-
-	f, err := os.Open(imagePath)
+// openDecode reads and decodes an image file (JPEG or PNG).
+func openDecode(path string) (image.Image, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", imagePath, err)
+		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 	img, _, err := image.Decode(f)
 	if err != nil {
-		return nil, fmt.Errorf("decode %s: %w", imagePath, err)
+		return nil, fmt.Errorf("decode %s: %w", path, err)
+	}
+	return img, nil
+}
+
+// Ground implements Provider.
+func (p *LocalProvider) Ground(ctx context.Context, imagePath string, opts Options) (*Result, error) {
+	start := time.Now()
+
+	img, err := openDecode(imagePath)
+	if err != nil {
+		return nil, err
 	}
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
@@ -133,6 +142,7 @@ func (p *LocalProvider) Ground(ctx context.Context, imagePath string, opts Optio
 		Backend:   BackendLocal,
 		Width:     w,
 		Height:    h,
+		Model:     "icon_detect-local",
 	}, nil
 }
 

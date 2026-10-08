@@ -156,10 +156,22 @@ Grounding runs wherever you want (`--grounding-backend`, env
 - `local` — the pinned **icon_detect** YOLO model (a ~12 MB single-class YOLOv8n
   ONNX export of OmniParser-v2.0's detector) runs **in-process** via ONNX
   Runtime: `brew install onnxruntime`, then `kvm-cli cua model download --yes`.
-  Works on Apple Silicon (CoreML EP via `--ort-ep coreml`/`auto`) and CUDA. Local
-  grounding returns interactive icon **boxes only** — no OCR captions — so the
-  calling agent reads the screenshot itself; `--annotate` and `cua text`-style
-  OCR content require the platform backend.
+  Works on Apple Silicon (CoreML EP via `--ort-ep coreml`/`auto`) and CUDA.
+- `local` + `--local-captions` — the same YOLO detector plus the **local
+  Florence-2 captioner**: a uv-managed Python sidecar (shipped inside kvm-cli)
+  serving `microsoft/Florence-2-base` `<MORE_DETAILED_CAPTION>` over HTTP, with
+  device autodetect (CUDA on NVIDIA, MPS on Apple Silicon, CPU fallback). Each
+  detected icon crop is captioned locally, so elements carry descriptions
+  without any OCR. Manage it with `kvm-cli cua captioner serve|status|stop`
+  (first start downloads ~1 GB of weights). Captions are model descriptions, not
+  OCR text — OCR'd text elements still require the platform tier.
+
+The local path is a **tiered ladder**, not an either-or choice. Tier 0 is
+YOLO boxes (fast, default). Tier 1 adds local captions (`--local-captions`).
+And `--escalate on-empty` (env `KVM_GROUNDING_ESCALATE`) opts into automatic
+escalation: when the selected tier finds zero elements, the next tier is
+tried — local boxes → local captions → the platform — with the final tier
+reported in the `model` field of the output.
 
 The planner (instruction-mode clicks) targets any **OpenAI-compatible
 endpoint**: `--planner <model> --planner-url https://host/v1
